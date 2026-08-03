@@ -97,6 +97,14 @@ local Config = {
     -- Peta ini penuh batu dan penghalang. Tanpa noclip, terbang lurus sering
     -- tersangkut dan karakter berhenti di tengah jalan.
     Noclip        = cfg.Noclip ~= false,
+
+    -- Menunggu dunia siap TIDAK bisa dimatikan lewat config -- disengaja.
+    -- Script ini dipakai tanpa pengawasan di cloud phone, jadi tidak boleh ada
+    -- jalur yang membuatnya menembak beli/jual sebelum karakter dan dunia
+    -- benar-benar termuat hanya karena config salah ketik. Hanya angka
+    -- waktunya yang bisa diatur, bukan on/off-nya.
+    MaksTungguSiap  = tonumber(cfg.MaksTungguSiap) or 60,
+    JedaKlikSiap    = tonumber(cfg.JedaKlikSiap) or 1.5,
 }
 
 local function status(t)
@@ -110,6 +118,71 @@ end)
 if not okNet then
     status("[BERHENTI] Gagal me-require Networking module.")
     return
+end
+
+-- ==========================================================
+-- TUNGGU GAME SIAP
+-- ==========================================================
+-- Dua strategi digabung, keduanya generik karena nama GUI animasi home/intro
+-- dunia ini belum terverifikasi dari klien asli:
+--   1. Klik tengah layar berkala -- kebanyakan tombol "Play"/pop-up tutorial
+--      duduk di tengah, dan klik tidak merusak apa pun kalau ternyata tidak
+--      ada yang perlu diklik.
+--   2. Anggap "siap" begitu karakter (HumanoidRootPart+Humanoid), leaderstats
+--      Leaves, dan folder dunia (Gardens/NPCS) semuanya sudah ada -- itu bukti
+--      langsung sesi sudah masuk gameplay sungguhan, bukan sekadar menebak
+--      berapa lama animasinya berjalan.
+local function klikTengahLayar()
+    local vim = game:GetService("VirtualInputManager")
+    local cam = workspace.CurrentCamera
+    local vp = (cam and cam.ViewportSize) or Vector2.new(1280, 720)
+    local x, y = vp.X / 2, vp.Y / 2
+    pcall(function()
+        vim:SendMouseButtonEvent(x, y, 0, true, game, 1)
+        task.wait(0.05)
+        vim:SendMouseButtonEvent(x, y, 0, false, game, 1)
+    end)
+end
+
+local function duniaSudahSiap()
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local ls = LocalPlayer:FindFirstChild("leaderstats")
+    local daun = ls and ls:FindFirstChild("Leaves")
+    return hrp ~= nil and hum ~= nil and daun ~= nil
+        and workspace:FindFirstChild("Gardens") ~= nil
+        and workspace:FindFirstChild("NPCS") ~= nil
+end
+
+-- Selalu berjalan, tanpa jalur mati -- lihat catatan di Config.MaksTungguSiap
+-- soal kenapa ini bukan toggle.
+local function tungguGameSiap()
+    status("[SIAP] Menunggu dunia termuat...")
+
+    local berhenti = false
+    task.spawn(function()
+        while not berhenti do
+            klikTengahLayar()
+            task.wait(Config.JedaKlikSiap)
+        end
+    end)
+
+    local batas = tick() + Config.MaksTungguSiap
+    while tick() < batas and not duniaSudahSiap() do
+        task.wait(0.5)
+    end
+    berhenti = true
+
+    if duniaSudahSiap() then
+        status("[SIAP] Dunia siap")
+    else
+        -- Setiap pemanggilan remote/baca state lain di script ini sudah
+        -- dibungkus pcall/pengecekan nil sendiri-sendiri, jadi melanjutkan
+        -- walau timeout tetap aman -- hanya berarti fase pertama mungkin
+        -- gagal dan dicoba lagi siklus berikutnya.
+        status("[SIAP] Timeout menunggu — lanjut jalan seadanya")
+    end
 end
 
 -- ==========================================================
@@ -963,6 +1036,9 @@ end
 -- ==========================================================
 _G.FHInstance = (_G.FHInstance or 0) + 1
 local instanceSaya = _G.FHInstance
+
+status(string.format("Aktif (#%d) — menunggu dunia siap...", instanceSaya))
+tungguGameSiap()
 
 status(string.format("Aktif (#%d) — mode ringkas: beli + jual", instanceSaya))
 
