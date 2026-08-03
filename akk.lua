@@ -287,6 +287,20 @@ local function pergiKe(pos, toleransi)
     end
 
     task.wait(0.2)
+    if jarakKe(pos) <= toleransi * 1.5 then return true end
+
+    -- FALLBACK: terbang gagal sampai (fisika/FPS bisa macet di cloud phone).
+    -- Server hanya memeriksa JARAK saat remote ditembak, bukan bagaimana
+    -- caranya sampai di situ, jadi memindahkan CFrame langsung ke dekat
+    -- tujuan tetap memenuhi syarat yang sama seperti terbang berhasil --
+    -- tanpa ini, gagal terbang berarti pembelian dibatalkan seluruhnya
+    -- padahal seharusnya bisa lanjut.
+    local _, hrp2 = karakter()
+    if not hrp2 then return false end
+    pcall(function()
+        hrp2.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0))
+    end)
+    task.wait(0.3)
     return jarakKe(pos) <= toleransi * 1.5
 end
 
