@@ -401,7 +401,10 @@ local function pasangBlackScreen()
         local tombolToggle = Instance.new("TextButton")
         tombolToggle.Name = "ToggleBlackScreen"
         tombolToggle.Size = UDim2.new(0, 100, 0, 34)
-        tombolToggle.Position = UDim2.new(0, 10, 0, 10)
+        -- Bawah-tengah, bukan pojok kiri-atas -- area atas sering ketutupan
+        -- UI sistem/Roblox di HP dan cloud phone, jadi lebih susah dipencet.
+        tombolToggle.Position = UDim2.new(0.5, 0, 1, -44)
+        tombolToggle.AnchorPoint = Vector2.new(0.5, 0)
         tombolToggle.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
         tombolToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
         tombolToggle.Font = Enum.Font.GothamBold
