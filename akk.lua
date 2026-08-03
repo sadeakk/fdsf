@@ -918,8 +918,8 @@ end
 local pembelianJendela = {}
 
 -- Dipakai bersama oleh beli seed dan beli gear -- satu-satunya beda adalah
--- peran NPC yang didekati dan remote yang ditembak.
-local function beliDari(daftar, peran, tembak, labelNPC)
+-- peran NPC yang didekati, remote yang ditembak, dan nama GUI shop-nya.
+local function beliDari(daftar, peran, tembak, labelNPC, namaGuiShop)
     -- BEDA dengan jual: membeli WAJIB dari dekat.
     --
     -- Secara teknis PurchaseSeed/PurchaseGear tetap diterima dari jarak jauh,
@@ -940,24 +940,55 @@ local function beliDari(daftar, peran, tembak, labelNPC)
 
     local dibeli = 0
     for _, s in ipairs(daftar) do
-        -- Jarak diperiksa ulang tiap item: karakter bisa terdorong menjauh di
-        -- tengah pembelian, dan satu fire dari jauh sudah cukup untuk ditandai.
-        if jarakKe(pos) > Config.JarakAman * 2 then
-            if not pergiKe(pos) then
-                status("[BATAL] Terlempar dari NPC, sisa pembelian dihentikan")
-                break
-            end
-        end
         if dibeli >= Config.MaxBeliPerSiklus then break end
-        if leaves() < s.harga then break end   -- daftar terurut, sisanya pasti lebih mahal
-        local ok = pcall(function() tembak(s.nama) end)
-        if ok then
-            dibeli = dibeli + 1
-            status(string.format("[BELI] %s (%d Leaves, sisa %d)", s.nama, s.harga, leaves()))
-            catatRiwayat(string.format("🛒 %s (%d)", s.nama, s.harga))
-            pembelianJendela[s.nama] = (pembelianJendela[s.nama] or 0) + 1
+
+        -- Habiskan item INI dulu -- tembak berulang sampai stoknya hilang dari
+        -- rak atau Leaves tidak cukup lagi -- baru pindah ke item berikutnya.
+        -- Sebelumnya cuma satu tembakan per item lalu langsung lompat ke seed
+        -- lain, jadi tiap jenis cuma kebagian 1 biji walau stoknya masih ada.
+        local harga = s.harga
+        local dibeliItemIni = 0
+
+        while dibeli < Config.MaxBeliPerSiklus do
+            -- Jarak diperiksa ulang tiap tembakan: karakter bisa terdorong
+            -- menjauh di tengah pembelian, dan satu fire dari jauh sudah
+            -- cukup untuk ditandai.
+            if jarakKe(pos) > Config.JarakAman * 2 then
+                if not pergiKe(pos) then
+                    status("[BATAL] Terlempar dari NPC, sisa pembelian dihentikan")
+                    return dibeli
+                end
+            end
+            if leaves() < harga then break end
+
+            local ok = pcall(function() tembak(s.nama) end)
+            if ok then
+                dibeli = dibeli + 1
+                dibeliItemIni = dibeliItemIni + 1
+                pembelianJendela[s.nama] = (pembelianJendela[s.nama] or 0) + 1
+            end
+            task.wait(Config.JedaAksi)
+
+            -- Berhenti begitu item ini hilang dari rak (stok habis) --
+            -- dicek ulang dari UI yang sama persis dipakai stokShop()/
+            -- stokGear(), bukan ditebak dari berapa kali sudah menembak.
+            local stokTerkini = bacaStokUI(namaGuiShop)
+            local masihAda = false
+            for _, cek in ipairs(stokTerkini) do
+                if cek.nama == s.nama then
+                    masihAda = true
+                    harga = cek.harga
+                    break
+                end
+            end
+            if not masihAda then break end
         end
-        task.wait(Config.JedaAksi)
+
+        if dibeliItemIni > 0 then
+            status(string.format("[BELI] %s x%d (%d Leaves, sisa %d)",
+                s.nama, dibeliItemIni, harga, leaves()))
+            catatRiwayat(string.format("🛒 %s x%d (%d)", s.nama, dibeliItemIni, harga))
+        end
     end
     return dibeli
 end
@@ -965,13 +996,13 @@ end
 local function beli(daftar)
     return beliDari(daftar, "seed",
         function(nama) Networking.SeedShop.PurchaseSeed:Fire(nama) end,
-        "penjual seed")
+        "penjual seed", "SeedShop")
 end
 
 local function beliGear(daftar)
     return beliDari(daftar, "gear",
         function(nama) Networking.GearShop.PurchaseGear:Fire(nama) end,
-        "penjual gear")
+        "penjual gear", "GearShop")
 end
 
 local function jual()
