@@ -276,6 +276,20 @@ local function catatRiwayat(teks)
     while #_G.FHRiwayat > 8 do table.remove(_G.FHRiwayat) end
 end
 
+-- Dipakai HUD (label Leaves) maupun checkpoint 5-menit -- satu fungsi supaya
+-- keduanya tidak bisa berbeda format. Menangani negatif juga (checkpoint bisa
+-- menampilkan selisih minus kalau Leaves berkurang).
+local function ringkasAngka(n)
+    n = tonumber(n) or 0
+    local tanda = n < 0 and "-" or ""
+    local a = math.abs(n)
+    if a >= 1e12 then return tanda .. string.format("%.2fT", a / 1e12)
+    elseif a >= 1e9 then return tanda .. string.format("%.2fB", a / 1e9)
+    elseif a >= 1e6 then return tanda .. string.format("%.2fM", a / 1e6)
+    elseif a >= 1e3 then return tanda .. string.format("%.1fK", a / 1e3)
+    else return tostring(n) end
+end
+
 local function pasangBlackScreen()
     if not Config.BlackScreen then return end
 
@@ -395,15 +409,6 @@ local function pasangBlackScreen()
         end)
         if not berhasil then
             gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-        end
-
-        local function ringkasAngka(n)
-            n = tonumber(n) or 0
-            if n >= 1e12 then return string.format("%.2fT", n / 1e12)
-            elseif n >= 1e9 then return string.format("%.2fB", n / 1e9)
-            elseif n >= 1e6 then return string.format("%.2fM", n / 1e6)
-            elseif n >= 1e3 then return string.format("%.1fK", n / 1e3)
-            else return tostring(n) end
         end
 
         task.spawn(function()
@@ -816,6 +821,12 @@ end
 -- ==========================================================
 -- AKSI: BELI & JUAL
 -- ==========================================================
+-- Menghitung apa saja yang dibeli sejak checkpoint 5-menit terakhir --
+-- dibaca dan dikosongkan oleh pasangCheckpointLeaves(). Tabel yang sama
+-- (bukan disalin) sengaja dipakai kedua fungsi supaya keduanya tidak bisa
+-- berbeda pendapat soal apa yang sudah "dilaporkan".
+local pembelianJendela = {}
+
 -- Dipakai bersama oleh beli seed dan beli gear -- satu-satunya beda adalah
 -- peran NPC yang didekati dan remote yang ditembak.
 local function beliDari(daftar, peran, tembak, labelNPC)
@@ -854,6 +865,7 @@ local function beliDari(daftar, peran, tembak, labelNPC)
             dibeli = dibeli + 1
             status(string.format("[BELI] %s (%d Leaves, sisa %d)", s.nama, s.harga, leaves()))
             catatRiwayat(string.format("🛒 %s (%d)", s.nama, s.harga))
+            pembelianJendela[s.nama] = (pembelianJendela[s.nama] or 0) + 1
         end
         task.wait(Config.JedaAksi)
     end
@@ -884,14 +896,66 @@ local function jual()
         end
     end
 
+    -- SellAll tidak mengembalikan berapa Leaves yang didapat -- dibaca lewat
+    -- selisih leaderstats sebelum/sesudah, bukan dari hasil remote.
+    local sebelum = leaves()
+
     -- Staging wajib. Tanpa PreviewSellAll lebih dulu, SellAll ditolak diam-diam.
     pcall(function() Networking.NPCS.PreviewSellAll:Fire() end)
     task.wait(Config.JedaAksi)
     pcall(function() Networking.NPCS.SellAll:Fire() end)
-    status("[JUAL] SellAll dikirim (Leaves: " .. leaves() .. ")")
-    catatRiwayat("💰 SellAll")
+
+    -- Leaves butuh waktu untuk direplikasi server -> klien; tanpa jeda ini
+    -- selisihnya sering masih terbaca 0 padahal penjualannya sendiri berhasil.
     task.wait(1)
+    local sesudah = leaves()
+    local untung = sesudah - sebelum
+
+    status(string.format("[JUAL] SellAll dikirim (Leaves: %d)", sesudah))
+    if untung > 0 then
+        catatRiwayat(string.format("💰 Jual +%s (Leaves: %s)", ringkasAngka(untung), ringkasAngka(sesudah)))
+    else
+        catatRiwayat(string.format("💰 SellAll (Leaves: %s)", ringkasAngka(sesudah)))
+    end
     return true
+end
+
+-- Ringkasan pembelian sejak checkpoint terakhir, urut nama.
+local function ringkasPembelian(map)
+    local bagian = {}
+    for nama, jumlah in pairs(map) do
+        bagian[#bagian + 1] = string.format("%s x%d", nama, jumlah)
+    end
+    if #bagian == 0 then return "tidak ada pembelian baru" end
+    table.sort(bagian)
+    return table.concat(bagian, ", ")
+end
+
+-- Checkpoint 5 menit: satu baris riwayat berisi apa saja yang dibeli sejak
+-- checkpoint sebelumnya, plus Leaves sekarang dan selisihnya. Ini terpisah
+-- dari baris beli/jual yang sudah live per-transaksi -- checkpoint ini untuk
+-- melihat ringkasan tanpa harus menonton terus, terutama karena stok shop
+-- sendiri hanya berubah tiap ~5 menit (restock).
+local function pasangCheckpointLeaves()
+    if not Config.BlackScreen then return end
+    task.spawn(function()
+        local awal = leaves()
+        while true do
+            task.wait(300)
+            local sekarang = leaves()
+            local delta = sekarang - awal
+            local deltaTeks = (delta >= 0 and "+" or "") .. ringkasAngka(delta)
+
+            catatRiwayat(string.format("⏱ %s | %s | 🍃 %s (%s)",
+                os.date("%H:%M"), ringkasPembelian(pembelianJendela),
+                ringkasAngka(sekarang), deltaTeks))
+
+            -- Dikosongkan di TEMPAT, bukan diganti tabel baru -- beliDari()
+            -- memegang acuan ke tabel yang sama persis.
+            for k in pairs(pembelianJendela) do pembelianJendela[k] = nil end
+            awal = sekarang
+        end
+    end)
 end
 
 -- ==========================================================
@@ -903,6 +967,7 @@ local instanceSaya = _G.FHInstance
 status(string.format("Aktif (#%d) — mode ringkas: beli + jual", instanceSaya))
 
 pasangBlackScreen()
+pasangCheckpointLeaves()
 if Config.AntiAFK then pasangAntiAFK() end
 
 task.spawn(function()
