@@ -294,36 +294,29 @@ local function pasangBlackScreen()
         bg.BorderSizePixel = 0
         bg.Parent = gui
 
-        local kiri = Instance.new("ImageLabel")
-        kiri.Size = UDim2.new(0.3, 0, 0.6, 0)
-        kiri.Position = UDim2.new(0.05, 0, 0.5, 0)
-        kiri.AnchorPoint = Vector2.new(0, 0.5)
-        kiri.BackgroundTransparency = 1
-        kiri.ScaleType = Enum.ScaleType.Fit
-        kiri.Image = "rbxassetid://79880397850563"
-        kiri.Parent = bg
+        -- Tombol toggle. Sengaja anak GUI langsung, BUKAN anak `bg` -- kalau
+        -- ditaruh di dalam bg, tombolnya ikut tersembunyi begitu bg disembunyikan
+        -- dan tidak ada cara menampilkannya lagi selain rejoin.
+        local tombolToggle = Instance.new("TextButton")
+        tombolToggle.Name = "ToggleBlackScreen"
+        tombolToggle.Size = UDim2.new(0, 100, 0, 34)
+        tombolToggle.Position = UDim2.new(0, 10, 0, 10)
+        tombolToggle.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+        tombolToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
+        tombolToggle.Font = Enum.Font.GothamBold
+        tombolToggle.TextSize = 16
+        tombolToggle.Text = "Hide"
+        tombolToggle.ZIndex = 20
+        tombolToggle.Parent = gui
+        local strokeToggle = Instance.new("UIStroke")
+        strokeToggle.Thickness = 1
+        strokeToggle.Color = Color3.fromRGB(255, 255, 255)
+        strokeToggle.Parent = tombolToggle
 
-        local kanan = Instance.new("ImageLabel")
-        kanan.Size = UDim2.new(0.3, 0, 0.6, 0)
-        kanan.Position = UDim2.new(0.95, 0, 0.5, 0)
-        kanan.AnchorPoint = Vector2.new(1, 0.5)
-        kanan.BackgroundTransparency = 1
-        kanan.ScaleType = Enum.ScaleType.Fit
-        kanan.Image = "rbxassetid://104624206636533"
-        kanan.Parent = bg
-
-        local judul = Instance.new("TextLabel")
-        judul.Size = UDim2.new(0.9, 0, 0.25, 0)
-        judul.Position = UDim2.new(0.5, 0, 0.95, 0)
-        judul.AnchorPoint = Vector2.new(0.5, 1)
-        judul.BackgroundTransparency = 1
-        judul.Text = "AFK MODE — WORLD 2\nFENG JIU MY BINI"
-        judul.TextColor3 = Color3.fromRGB(255, 255, 255)
-        judul.TextScaled = true
-        judul.TextWrapped = true
-        judul.Font = Enum.Font.Code
-        judul.ZIndex = 10
-        judul.Parent = bg
+        tombolToggle.MouseButton1Click:Connect(function()
+            bg.Visible = not bg.Visible
+            tombolToggle.Text = bg.Visible and "Hide" or "Show"
+        end)
 
         local tengah = Instance.new("TextLabel")
         tengah.Size = UDim2.new(0.4, 0, 0.2, 0)
