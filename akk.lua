@@ -381,8 +381,65 @@ local function ringkasAngka(n)
     else return tostring(n) end
 end
 
+-- Ringkasan tas untuk panel HUD kiri/kanan. Dibedakan lewat ATRIBUT tool,
+-- bukan nama -- sama seperti dipakai di seluruh script ini (SeedTool untuk
+-- seed, Sprinkler/WateringCan untuk gear). Shovel/Build sengaja dilewati:
+-- dimiliki semua pemain, jadi menampilkannya cuma "Shovel x1" tanpa arti.
+local function bacaInventoryRingkas()
+    local seedMap, gearMap = {}, {}
+    for _, wadah in ipairs({ LocalPlayer:FindFirstChild("Backpack"), LocalPlayer.Character }) do
+        if wadah then
+            for _, t in ipairs(wadah:GetChildren()) do
+                if t:IsA("Tool") then
+                    local seedName = t:GetAttribute("SeedTool")
+                    local gearName = t:GetAttribute("Sprinkler") or t:GetAttribute("WateringCan")
+                    if seedName then
+                        seedMap[seedName] = (seedMap[seedName] or 0) + (tonumber(t:GetAttribute("Count")) or 1)
+                    elseif gearName then
+                        gearMap[gearName] = (gearMap[gearName] or 0) + 1
+                    end
+                end
+            end
+        end
+    end
+    return seedMap, gearMap
+end
+
+local function formatInventoryHUD(map, simbol)
+    local baris = {}
+    for nama, jumlah in pairs(map) do
+        baris[#baris + 1] = string.format("%s %s x%d", simbol, nama, jumlah)
+    end
+    if #baris == 0 then return "(kosong)" end
+    table.sort(baris)
+    return table.concat(baris, "\n")
+end
+
 local function pasangBlackScreen()
     if not Config.BlackScreen then return end
+
+    -- Re-run di sesi yang sama (loadstring dijalankan ulang tanpa rejoin)
+    -- meninggalkan GUI lama menggantung kalau tidak dibersihkan -- dua HUD
+    -- bertumpuk, dua tombol toggle, dan dua loop update jalan bersamaan.
+    -- Menghapus gui lama juga otomatis menghentikan loop update-nya, karena
+    -- loop itu berhenti sendiri begitu gui.Parent bernilai nil.
+    do
+        -- Dibangun lewat table.insert, BUKAN literal {a, b, c}: kalau gethui
+        -- tidak ada di executor ini, entri pertamanya nil, dan ipairs BERHENTI
+        -- di nil pertama -- CoreGui/PlayerGui di belakangnya tidak akan pernah
+        -- diperiksa sama sekali.
+        local tempatGui = {}
+        local okGethui, hui = pcall(function() return gethui and gethui() end)
+        if okGethui and hui then table.insert(tempatGui, hui) end
+        table.insert(tempatGui, game:GetService("CoreGui"))
+        local pgLama = LocalPlayer:FindFirstChild("PlayerGui")
+        if pgLama then table.insert(tempatGui, pgLama) end
+
+        for _, wadah in ipairs(tempatGui) do
+            local lama = wadah:FindFirstChild("AFK_BlackScreen")
+            if lama then pcall(function() lama:Destroy() end) end
+        end
+    end
 
     pcall(function() workspace.CurrentCamera.FieldOfView = 30 end)
 
@@ -464,6 +521,46 @@ local function pasangBlackScreen()
         strokeRiwayat.Color = Color3.fromRGB(0, 0, 0)
         strokeRiwayat.Parent = riwayat
 
+        -- Panel gear (kiri) & seed (kanan) di ruang kosong pinggir layar,
+        -- persis di posisi dua gambar yang dulu dihapus dari sini.
+        local panelGear = Instance.new("TextLabel")
+        panelGear.Size = UDim2.new(0.26, 0, 0.5, 0)
+        panelGear.Position = UDim2.new(0.03, 0, 0.5, 0)
+        panelGear.AnchorPoint = Vector2.new(0, 0.5)
+        panelGear.BackgroundTransparency = 1
+        panelGear.Text = "⚙️ GEAR"
+        panelGear.TextColor3 = Color3.fromRGB(180, 210, 255)
+        panelGear.TextSize = 14
+        panelGear.TextXAlignment = Enum.TextXAlignment.Left
+        panelGear.TextYAlignment = Enum.TextYAlignment.Top
+        panelGear.TextWrapped = true
+        panelGear.Font = Enum.Font.GothamBold
+        panelGear.ZIndex = 10
+        panelGear.Parent = bg
+        local strokeGear = Instance.new("UIStroke")
+        strokeGear.Thickness = 1
+        strokeGear.Color = Color3.fromRGB(0, 0, 0)
+        strokeGear.Parent = panelGear
+
+        local panelSeed = Instance.new("TextLabel")
+        panelSeed.Size = UDim2.new(0.26, 0, 0.5, 0)
+        panelSeed.Position = UDim2.new(0.97, 0, 0.5, 0)
+        panelSeed.AnchorPoint = Vector2.new(1, 0.5)
+        panelSeed.BackgroundTransparency = 1
+        panelSeed.Text = "🌱 SEED"
+        panelSeed.TextColor3 = Color3.fromRGB(180, 255, 190)
+        panelSeed.TextSize = 14
+        panelSeed.TextXAlignment = Enum.TextXAlignment.Right
+        panelSeed.TextYAlignment = Enum.TextYAlignment.Top
+        panelSeed.TextWrapped = true
+        panelSeed.Font = Enum.Font.GothamBold
+        panelSeed.ZIndex = 10
+        panelSeed.Parent = bg
+        local strokeSeed = Instance.new("UIStroke")
+        strokeSeed.Thickness = 1
+        strokeSeed.Color = Color3.fromRGB(0, 0, 0)
+        strokeSeed.Parent = panelSeed
+
         local perf = Instance.new("TextLabel")
         perf.Size = UDim2.new(0.5, 0, 0.05, 0)
         perf.Position = UDim2.new(0.5, 0, 0.02, 0)
@@ -507,6 +604,11 @@ local function pasangBlackScreen()
 
         task.spawn(function()
             local Stats = game:GetService("Stats")
+            -- Menit terakhir panel gear/seed direfresh -- dibandingkan
+            -- terhadap jam sungguhan (os.date), bukan dihitung mundur dari
+            -- saat script mulai, supaya jatuh di menit bulat yang sama
+            -- persis tiap kali (:02, :07, :12, ... :57).
+            local menitRefreshTerakhir = nil
             while gui.Parent do
                 local daun = 0
                 pcall(function()
@@ -531,6 +633,21 @@ local function pasangBlackScreen()
                 perf.Text = string.format("🎮 FPS: %s  |  📶 Ping: %s ms  |  🧠 Mem: %s MB", fps, ping, mem)
 
                 if _G.FallHarvestDebug then debug.Text = tostring(_G.FallHarvestDebug) end
+
+                -- Bacaan tas lebih berat (menelusuri semua Tool di Backpack)
+                -- daripada baris lain di atas -- direfresh tiap 5 menit pas
+                -- di menit :02/:07/:12/.../:57, dan hanya SEKALI per menit itu
+                -- (loop ini sendiri berdetak tiap 1 detik, jadi tanpa penanda
+                -- menitRefreshTerakhir baris ini akan tertembak 60x berturut
+                -- selama menit yang sama).
+                local menitSekarang = tonumber(os.date("%M"))
+                if menitSekarang % 5 == 2 and menitSekarang ~= menitRefreshTerakhir then
+                    menitRefreshTerakhir = menitSekarang
+                    local seedMap, gearMap = bacaInventoryRingkas()
+                    panelGear.Text = "⚙️ GEAR\n" .. formatInventoryHUD(gearMap, "⚙️")
+                    panelSeed.Text = formatInventoryHUD(seedMap, "🌱") .. "\n🌱 SEED"
+                end
+
                 task.wait(1)
             end
         end)
@@ -556,9 +673,15 @@ local function pasangAntiAFK()
 
     -- Lapis 2: gerakan nyata berkala. Klik saja kadang tidak cukup pada sesi
     -- panjang; lompatan menghasilkan input fisik yang jelas.
+    --
+    -- Disalin sebelum loop mulai supaya re-run di sesi yang sama (loadstring
+    -- dijalankan ulang tanpa rejoin) tidak meninggalkan loop lompat lama tetap
+    -- jalan berdampingan dengan yang baru.
+    local instanceSayaLokal = _G.FHInstance
     task.spawn(function()
-        while true do
+        while _G.FHInstance == instanceSayaLokal do
             task.wait(math.random(150, 240))
+            if _G.FHInstance ~= instanceSayaLokal then break end
             pcall(function()
                 vim:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
                 task.wait(0.1)
@@ -576,10 +699,11 @@ end
 -- ==========================================================
 -- FPS BOOST
 -- ==========================================================
--- Versi asli menghapus seluruh Workspace.Gardens. Kebun sendiri masih dipakai
--- untuk main manual (tanam/panen di luar script ini), jadi yang dibuang hanya
--- kebun MILIK ORANG LAIN -- justru penyumbang beban terbesar (Plot7 saja
--- terhitung 178 tanaman).
+-- Versi asli menghapus seluruh Workspace.Gardens. Di sini kebun sendiri tetap
+-- dilindungi meski tidak lagi dipakai untuk tanam/panen manual -- sekadar
+-- jaga-jaga (murah, dan menghindari kebiasaan lama yang pernah menghapus
+-- kebun sungguhan). Yang dibuang hanya kebun MILIK ORANG LAIN -- justru
+-- penyumbang beban terbesar (Plot7 saja terhitung 178 tanaman).
 local function bersihkanKebunOrang(tunggu)
     if not Config.FpsBoost then return end
 
@@ -627,6 +751,34 @@ local function bersihkanKebunOrang(tunggu)
     return dibuang
 end
 
+-- Menghapus semua tanaman (dan buah yang sedang tumbuh di atasnya, karena
+-- itu menempel sebagai bagian dari model tanaman) di kebun SENDIRI.
+--
+-- Kebun orang lain sudah lenyap SELURUHNYA lewat bersihkanKebunOrang(), jadi
+-- yang tersisa di seluruh workspace cuma model tanaman milik sendiri. Aman
+-- dihapus karena script ini tidak lagi menanam/memanen/mencabut sama sekali
+-- -- murni Destroy() sisi klien, tidak menembak remote apa pun, jadi tidak
+-- mengubah apa pun yang tersimpan di server maupun memicu anticheat.
+local function bersihkanFruitPlantSendiri()
+    if not Config.FpsBoost then return 0 end
+
+    local plotku = plotSaya()
+    if not plotku then return 0 end
+
+    local plants = plotku:FindFirstChild("Plants")
+    if not plants then return 0 end
+
+    local dihapus = 0
+    for _, tanaman in ipairs(plants:GetChildren()) do
+        pcall(function() tanaman:Destroy() end)
+        dihapus = dihapus + 1
+    end
+    if dihapus > 0 then
+        status(string.format("[FPS] %d tanaman/buah di kebun sendiri dihapus", dihapus))
+    end
+    return dihapus
+end
+
 -- Satu tempat untuk memutuskan "boleh disentuh atau tidak".
 -- Dipakai sapuan awal MAUPUN hook DescendantAdded, supaya keduanya tidak bisa
 -- berbeda pendapat.
@@ -643,9 +795,9 @@ local function bolehDibrutalkan(d)
     local char = LocalPlayer.Character
     if char and d:IsDescendantOf(char) then return false end
 
-    -- Kebun sendiri dilindungi UTUH. Membekukan, menyembunyikan, atau mengganti
-    -- materialnya bisa mengacaukan pembacaan posisi tanaman dan raycast lahan
-    -- tanam kalau kamu masih main manual di sana.
+    -- Kebun sendiri dilindungi UTUH -- murni jaga-jaga terhadap kebiasaan lama
+    -- yang pernah menghapus kebun sungguhan, bukan karena masih dipakai untuk
+    -- tanam/panen manual.
     local plotku = plotSayaCepat()
     if plotku and d:IsDescendantOf(plotku) then return false end
 
@@ -758,11 +910,46 @@ local function pasangHookBrutal()
     end)
 end
 
+local hookGardenTerpasang = false
+local jadwalBersihGardenAktif = false
+
+-- Kebun orang lain dimuat bertahap begitu pemain baru masuk server -- tanpa
+-- ini, kebun barunya cuma dihapus di sapuan periodik berikutnya (bisa
+-- puluhan detik). Hook ini bereaksi begitu Model kebun baru MUNCUL di
+-- workspace.Gardens, jadi jedanya jauh lebih pendek.
+local function pasangHookGardenBaru()
+    if hookGardenTerpasang then return end
+    local gardens = workspace:FindFirstChild("Gardens")
+    if not gardens then return end
+    hookGardenTerpasang = true
+
+    gardens.ChildAdded:Connect(function()
+        if not Config.FpsBoost then return end
+        -- Debounce: server sering memuat BEBERAPA kebun sekaligus (mis. saat
+        -- server baru terisi banyak pemain dalam hitungan detik). Tanpa ini,
+        -- tiap kebun baru menjadwalkan sapuan penuhnya sendiri dan semuanya
+        -- menumpuk hampir bersamaan -- satu sapuan yang cukup diulang berkali-
+        -- kali secara sia-sia.
+        if jadwalBersihGardenAktif then return end
+        jadwalBersihGardenAktif = true
+
+        task.defer(function()
+            -- Beri sedikit waktu supaya Model-nya (dan atribut pemiliknya)
+            -- selesai termuat -- deteksi terlalu dini bisa salah kira kebun
+            -- baru ini kebun sendiri padahal atributnya belum sempat terpasang.
+            task.wait(1)
+            bersihkanKebunOrang(false)
+            jadwalBersihGardenAktif = false
+        end)
+    end)
+end
+
 local function applyFpsBoost()
     if not Config.FpsBoost then return end
     status("[FPS] Membersihkan dekorasi berat...")
 
     bersihkanKebunOrang(true)
+    bersihkanFruitPlantSendiri()
 
     local nWadah = nukeLingkungan()
 
@@ -813,6 +1000,12 @@ local function applyFpsBoost()
         settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
     end)
 
+    -- Audio dimatikan sepenuhnya -- tidak ada yang mendengarkan (berjalan di
+    -- background/cloud phone), jadi decoding suara murni pemborosan CPU.
+    pcall(function()
+        UserSettings():GetService("UserGameSettings").MasterVolume = 0
+    end)
+
     -- Pemulihan CanTouch di kebun sendiri, kalau versi sebelumnya sempat
     -- mematikannya secara tidak sengaja.
     pcall(function()
@@ -831,6 +1024,7 @@ local function applyFpsBoost()
     end)
 
     pasangHookBrutal()
+    pasangHookGardenBaru()
 
     status("[FPS] Selesai")
 end
@@ -952,6 +1146,11 @@ local function beliDari(daftar, peran, tembak, labelNPC, namaGuiShop)
         -- lain, jadi tiap jenis cuma kebagian 1 biji walau stoknya masih ada.
         local harga = s.harga
         local dibeliItemIni = 0
+        -- Jaring pengaman: kalau tembakan terus gagal (error remote sesaat)
+        -- padahal stok dan Leaves masih cukup, tidak ada apa pun di atas yang
+        -- pernah menghentikan loop-nya -- ini satu-satunya yang membuatnya
+        -- berhenti alih-alih menembak sia-sia selamanya.
+        local gagalBerturut = 0
 
         while dibeli < Config.MaxBeliPerSiklus do
             -- Jarak diperiksa ulang tiap tembakan: karakter bisa terdorong
@@ -970,6 +1169,13 @@ local function beliDari(daftar, peran, tembak, labelNPC, namaGuiShop)
                 dibeli = dibeli + 1
                 dibeliItemIni = dibeliItemIni + 1
                 pembelianJendela[s.nama] = (pembelianJendela[s.nama] or 0) + 1
+                gagalBerturut = 0
+            else
+                gagalBerturut = gagalBerturut + 1
+                if gagalBerturut >= 3 then
+                    status("[BATAL] " .. s.nama .. " gagal ditembak 3x berturut-turut — dilewati")
+                    break
+                end
             end
             task.wait(Config.JedaAksi)
 
@@ -1045,10 +1251,12 @@ local function jual()
     local untung = sesudah - sebelum
 
     status(string.format("[JUAL] SellAll dikirim (Leaves: %d)", sesudah))
+    -- Riwayat hanya dicatat kalau BENAR-BENAR ada buah yang laku (Leaves naik).
+    -- SellAll ditembak setiap siklus terlepas ada buah atau tidak, dan kalau
+    -- baris "tidak jual apa-apa" ikut masuk riwayat, 8 barisnya cepat penuh
+    -- oleh entri kosong dan menenggelamkan riwayat beli/jual yang sungguhan.
     if untung > 0 then
         catatRiwayat(string.format("💰 Jual +%s (Leaves: %s)", ringkasAngka(untung), ringkasAngka(sesudah)))
-    else
-        catatRiwayat(string.format("💰 SellAll (Leaves: %s)", ringkasAngka(sesudah)))
     end
     return true
 end
@@ -1071,10 +1279,18 @@ end
 -- sendiri hanya berubah tiap ~5 menit (restock).
 local function pasangCheckpointLeaves()
     if not Config.BlackScreen then return end
+    -- _G.FHInstance sudah bertambah sebelum fungsi ini dipanggil (lihat LOOP
+    -- UTAMA), jadi nilai yang disalin di sini adalah nomor instance SAAT INI.
+    -- Tanpa penjagaan ini, re-run di sesi yang sama (loadstring dijalankan
+    -- ulang tanpa rejoin) meninggalkan checkpoint lama tetap jalan selamanya,
+    -- dan riwayat kebanjiran baris checkpoint ganda tiap 5 menit.
+    local instanceSayaLokal = _G.FHInstance
     task.spawn(function()
         local awal = leaves()
-        while true do
+        while _G.FHInstance == instanceSayaLokal do
             task.wait(300)
+            if _G.FHInstance ~= instanceSayaLokal then break end
+
             local sekarang = leaves()
             local delta = sekarang - awal
             local deltaTeks = (delta >= 0 and "+" or "") .. ringkasAngka(delta)
@@ -1123,7 +1339,10 @@ task.spawn(function()
                 fase[#fase + 1] = { "fps-boost", applyFpsBoost }
             elseif Config.SiklusBersihKebun > 0
                    and putaranSiklus % Config.SiklusBersihKebun == 0 then
-                fase[#fase + 1] = { "bersih-kebun", function() bersihkanKebunOrang(false) end }
+                fase[#fase + 1] = { "bersih-kebun", function()
+                    bersihkanKebunOrang(false)
+                    bersihkanFruitPlantSendiri()
+                end }
             end
 
             -- Jual dulu supaya Leaves-nya bisa langsung dipakai belanja di
