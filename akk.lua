@@ -51,6 +51,10 @@ local Config = {
     AutoBeli      = (cfg.AutoBeli ~= false) and (cfgMain.BuySeeds ~= false),
     AutoBeliGear  = (cfg.AutoBeliGear == true) or (cfgMain.BuyGears == true),
     AutoJual      = cfg.AutoJual ~= false,
+    -- Daily Deal diklaim SEBELUM SellAll -- lihat jual(). Buah yang termasuk
+    -- daily deal dapat bonus lewat jalur ini; kalau SellAll jalan duluan,
+    -- buahnya sudah terjual biasa dan bonusnya hilang.
+    DailyDeal     = (cfg.DailyDeal ~= false) and (cfgMain.DailyDeal ~= false),
 
     -- Daftar putih per-nama: { ["Nama Item"] = true/false }. nil (tidak diisi
     -- sama sekali) berarti TIDAK ada penyaringan -- beli semua yang ada di rak,
@@ -1020,6 +1024,14 @@ local function jual()
     -- SellAll tidak mengembalikan berapa Leaves yang didapat -- dibaca lewat
     -- selisih leaderstats sebelum/sesudah, bukan dari hasil remote.
     local sebelum = leaves()
+
+    -- Daily Deal DULU, sebelum SellAll. Urutan ini disengaja: begitu SellAll
+    -- jalan, buah yang sebenarnya termasuk daily deal sudah keburu terjual
+    -- lewat jalur biasa dan bonusnya hilang.
+    if Config.DailyDeal then
+        pcall(function() Networking.NPCS.UseDailyDealAll:Fire() end)
+        task.wait(Config.JedaAksi)
+    end
 
     -- Staging wajib. Tanpa PreviewSellAll lebih dulu, SellAll ditolak diam-diam.
     pcall(function() Networking.NPCS.PreviewSellAll:Fire() end)
