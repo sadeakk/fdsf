@@ -41,7 +41,6 @@ print("✅ Kaitun aktif (verifikasi panel key dinonaktifkan)")
 
 local Players            = game:GetService("Players")
 local ReplicatedStorage  = game:GetService("ReplicatedStorage")
-local RunService         = game:GetService("RunService")
 local LocalPlayer        = Players.LocalPlayer
 
 local Config = {
@@ -70,14 +69,20 @@ local Config = {
     -- Batas frame. Sasarannya perangkat yang menjalankan beberapa klien Roblox
     -- sekaligus -- di sana render adalah pemakan CPU terbesar, sedangkan bot
     -- tidak butuh frame tinggi sama sekali. Terukur: 125 fps -> 19 fps.
-    -- TIDAK BOLEH terlalu rendah: loop terbang memakai RunService.Heartbeat,
-    -- dan di bawah ~10 fps kemudinya mulai kasar. Set 0 untuk mematikan
-    -- pembatasan sepenuhnya.
+    -- Set 0 untuk mematikan pembatasan sepenuhnya.
     BatasFps      = (function()
         local v = tonumber(cfg.BatasFps) or 20
         if v <= 0 then return 0 end
         return math.max(10, math.min(240, v))
     end)(),
+
+    -- Jeda antar koreksi arah saat terbang ke NPC (pergiKe). TIDAK diikat ke
+    -- RunService.Heartbeat lagi -- di perangkat yang menjalankan banyak
+    -- executor sekaligus (mis. 10 akun cloud phone), tiap akun memaksa loop
+    -- ini berjalan di laju render penuh SECARA BERSAMAAN, dan itu cukup berat
+    -- untuk membuat sebagian executor force-close. 0.1 detik (10x/detik)
+    -- masih cukup halus untuk kecepatan terbang default (22 studs/detik).
+    JedaGerak     = tonumber(cfg.JedaGerak) or 0.1,
     -- Kebun orang lain dimuat bertahap seiring pemain berdatangan, jadi
     -- pembersihannya diulang. Murah (~1,2 ms, hanya menyentuh Gardens).
     SiklusBersihKebun = tonumber(cfg.SiklusBersihKebun) or 5,
@@ -261,7 +266,7 @@ local function pergiKe(pos, toleransi)
         local selisih = tujuan - h2.Position
         if (h2.Position - pos).Magnitude <= toleransi then break end
         bv.Velocity = selisih.Unit * Config.KecepatanTerbang
-        -- Diterapkan ulang tiap frame: Roblox mengembalikan CanCollide sendiri
+        -- Diterapkan ulang tiap denyut: Roblox mengembalikan CanCollide sendiri
         -- pada beberapa keadaan, dan sekali saja di awal tidak cukup.
         if Config.Noclip then
             local c = LocalPlayer.Character
@@ -271,7 +276,18 @@ local function pergiKe(pos, toleransi)
                 end
             end
         end
-        RunService.Heartbeat:Wait()
+        -- task.wait(Config.JedaGerak), BUKAN RunService.Heartbeat:Wait().
+        --
+        -- Heartbeat berdetak sekali per frame yang dirender -- kalau kamu
+        -- menjalankan banyak executor sekaligus di satu perangkat (mis. 10
+        -- akun cloud phone), tiap akun memaksakan loop Lua ini berjalan di
+        -- kecepatan render penuh SECARA BERSAMAAN, dan itu bisa membebani CPU
+        -- sampai sebagian executor force-close. Fisika BodyVelocity tetap
+        -- disimulasikan mesin fisika terlepas dari seberapa sering kita
+        -- memperbarui arahnya, jadi menurunkan lajunya ke interval tetap tidak
+        -- mengurangi kehalusan gerak -- cuma mengurangi berapa kali skrip ini
+        -- ikut jalan tiap detik.
+        task.wait(Config.JedaGerak)
     end
 
     bv:Destroy()
@@ -440,8 +456,6 @@ local function pasangBlackScreen()
             if lama then pcall(function() lama:Destroy() end) end
         end
     end
-
-    pcall(function() workspace.CurrentCamera.FieldOfView = 30 end)
 
     local ok = pcall(function()
         local gui = Instance.new("ScreenGui")
@@ -958,6 +972,10 @@ local function applyFpsBoost()
         Lighting.GlobalShadows = false
         Lighting.FogEnd = 9e9
         Lighting.Brightness = 0
+        -- Teknologi rendering termurah yang Roblox punya -- tidak ada kalkulasi
+        -- shadow map/voxel lighting sama sekali. Ini pengaruhnya paling besar
+        -- ke FPS dari semua pengaturan Lighting di sini.
+        Lighting.Technology = Enum.Technology.Compatibility
         for _, c in ipairs(Lighting:GetChildren()) do
             if c:IsA("BloomEffect") or c:IsA("BlurEffect") or c:IsA("ColorCorrectionEffect")
                or c:IsA("SunRaysEffect") or c:IsA("DepthOfFieldEffect")
@@ -966,6 +984,12 @@ local function applyFpsBoost()
             end
         end
     end)
+
+    -- FOV sempit = lebih sedikit objek yang masuk frustum kamera untuk
+    -- dirender. Dulu ini nempel di pasangBlackScreen(), padahal FOV kecil
+    -- adalah penghematan render, bukan urusan layar hitam -- sekarang berlaku
+    -- kapan pun FpsBoost aktif, terlepas dari BlackScreen nyala atau tidak.
+    pcall(function() workspace.CurrentCamera.FieldOfView = 30 end)
 
     local hitung, kena = 0, 0
     for _, d in ipairs(workspace:GetDescendants()) do
@@ -998,6 +1022,12 @@ local function applyFpsBoost()
 
     pcall(function()
         settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+    end)
+
+    -- Geometri MeshPart termurah yang tersedia -- lebih sedikit vertex untuk
+    -- di-render per model.
+    pcall(function()
+        settings().Rendering.MeshPartDetailLevel = Enum.MeshPartDetailLevel.DetailLevel0
     end)
 
     -- Audio dimatikan sepenuhnya -- tidak ada yang mendengarkan (berjalan di
