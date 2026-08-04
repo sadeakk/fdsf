@@ -159,9 +159,21 @@ local function duniaSudahSiap()
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     local ls = LocalPlayer:FindFirstChild("leaderstats")
     local daun = ls and ls:FindFirstChild("Leaves")
+    local cam = workspace.CurrentCamera
+
+    -- Animasi intro/home biasanya dikendalikan dengan menyetel CameraType ke
+    -- Scriptable, lalu dikembalikan ke Custom (ikut pemain) begitu selesai.
+    -- Tanpa pemeriksaan ini, karakter/leaderstats/dunia bisa saja sudah ada
+    -- SEMENTARA animasinya masih berjalan dan kamera masih dikendalikan game
+    -- -- lalu applyFpsBoost() ikut menyentuh CurrentCamera (FieldOfView) di
+    -- tengah animasi itu dan kameranya macet, tidak pernah kembali mengikuti
+    -- pemain.
+    local kameraSiap = cam ~= nil and cam.CameraType == Enum.CameraType.Custom
+
     return hrp ~= nil and hum ~= nil and daun ~= nil
         and workspace:FindFirstChild("Gardens") ~= nil
         and workspace:FindFirstChild("NPCS") ~= nil
+        and kameraSiap
 end
 
 -- Selalu berjalan, tanpa jalur mati -- lihat catatan di Config.MaksTungguSiap
@@ -1136,6 +1148,15 @@ local function leaves()
     return n and n.Value or 0
 end
 
+-- Atribut pemain, bukan pemindaian Backpack -- server yang memegang angka
+-- sebenarnya, dan membacanya lewat satu atribut jauh lebih murah daripada
+-- menelusuri seluruh isi tas tiap siklus cuma untuk tahu "ada buah atau
+-- tidak". Dipakai buat menggerbang seluruh fase jual: tanpa buah, DailyDeal
+-- dan SellAll cuma menembak sia-sia.
+local function jumlahBuah()
+    return tonumber(LocalPlayer:GetAttribute("FruitCount")) or 0
+end
+
 -- ==========================================================
 -- AKSI: BELI & JUAL
 -- ==========================================================
@@ -1263,7 +1284,9 @@ local function jual()
 
     -- Daily Deal DULU, sebelum SellAll. Urutan ini disengaja: begitu SellAll
     -- jalan, buah yang sebenarnya termasuk daily deal sudah keburu terjual
-    -- lewat jalur biasa dan bonusnya hilang.
+    -- lewat jalur biasa dan bonusnya hilang. Tidak digerbang waktu lagi --
+    -- jual() sendiri sekarang hanya dipanggil pemanggil-nya saat jumlahBuah()
+    -- > 0, jadi ini sudah otomatis tidak pernah menembak ke tas kosong.
     if Config.DailyDeal then
         pcall(function() Networking.NPCS.UseDailyDealAll:Fire() end)
         task.wait(Config.JedaAksi)
@@ -1282,9 +1305,11 @@ local function jual()
 
     status(string.format("[JUAL] SellAll dikirim (Leaves: %d)", sesudah))
     -- Riwayat hanya dicatat kalau BENAR-BENAR ada buah yang laku (Leaves naik).
-    -- SellAll ditembak setiap siklus terlepas ada buah atau tidak, dan kalau
-    -- baris "tidak jual apa-apa" ikut masuk riwayat, 8 barisnya cepat penuh
-    -- oleh entri kosong dan menenggelamkan riwayat beli/jual yang sungguhan.
+    -- jual() sendiri sudah digerbang jumlahBuah()>0 oleh pemanggilnya, tapi itu
+    -- tidak menjamin SellAll BERHASIL (bisa gagal jaringan, atau FruitCount
+    -- sempat basi) -- kalau baris "tidak jual apa-apa" ikut masuk riwayat, 8
+    -- barisnya cepat penuh oleh entri kosong dan menenggelamkan riwayat
+    -- beli/jual yang sungguhan.
     if untung > 0 then
         catatRiwayat(string.format("💰 Jual +%s (Leaves: %s)", ringkasAngka(untung), ringkasAngka(sesudah)))
     end
@@ -1376,8 +1401,13 @@ task.spawn(function()
             end
 
             -- Jual dulu supaya Leaves-nya bisa langsung dipakai belanja di
-            -- fase berikutnya pada siklus yang sama.
-            if Config.AutoJual then fase[#fase + 1] = { "jual", jual } end
+            -- fase berikutnya pada siklus yang sama -- TAPI hanya kalau
+            -- benar-benar ada buah di tas. Tanpa penjagaan ini, DailyDeal dan
+            -- SellAll ditembak tiap siklus (~5 detik) walau tas kosong --
+            -- sia-sia, dan bisa jadi pola mencolok di sisi server.
+            if Config.AutoJual and jumlahBuah() > 0 then
+                fase[#fase + 1] = { "jual", jual }
+            end
 
             if Config.AutoBeli then
                 fase[#fase + 1] = { "beli", function()
