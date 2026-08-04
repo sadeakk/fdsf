@@ -87,6 +87,15 @@ local Config = {
     -- pembersihannya diulang. Murah (~1,2 ms, hanya menyentuh Gardens).
     SiklusBersihKebun = tonumber(cfg.SiklusBersihKebun) or 5,
 
+    -- Batas waktu menunggu KEBUN SENDIRI termuat, sebelum sapuan pertama
+    -- boleh menghapus kebun orang lain. Kalau kebunmu berisi banyak sekali
+    -- tanaman, server butuh lebih lama mengirim semuanya ke klien sebelum
+    -- plotSaya() bisa mengenalinya -- 20 detik lama bisa saja tidak cukup,
+    -- dan gagal mengenali berarti sapuan pertama DILEWATI seluruhnya demi
+    -- keamanan (lihat bersihkanKebunOrang). Naikkan angka ini kalau kebunmu
+    -- besar dan status selalu menunjukkan "tidak terdeteksi" di awal.
+    MaksTungguKebunSendiri = tonumber(cfg.MaksTungguKebunSendiri) or 30,
+
     JedaSiklus    = tonumber(cfg.JedaSiklus) or 5,
     -- cfgMain.Delay ("Jeda loop auto buy") didahulukan supaya format config
     -- yang kamu tempel dari panel langsung berlaku tanpa perlu isi cfgFH juga.
@@ -599,8 +608,9 @@ local function bersihkanKebunOrang(tunggu)
     -- Penantian ini hanya untuk pemanggilan pertama; pemanggilan berkala tidak
     -- boleh memblokir siklus selama 20 detik.
     if not plotku and tunggu then
-        status("[FPS] Menunggu kebun sendiri termuat...")
-        local batas = tick() + 20
+        status(string.format("[FPS] Menunggu kebun sendiri termuat (maks %ds)...",
+            Config.MaksTungguKebunSendiri))
+        local batas = tick() + Config.MaksTungguKebunSendiri
         while tick() < batas and not plotku do
             task.wait(1)
             plotku = plotSaya()
@@ -658,6 +668,11 @@ local function bersihkanFruitPlantSendiri()
     for _, tanaman in ipairs(plants:GetChildren()) do
         pcall(function() tanaman:Destroy() end)
         dihapus = dihapus + 1
+        -- Kebun dengan tanaman sangat banyak bisa membuat loop ini menghapus
+        -- ratusan/ribuan model tanpa jeda sama sekali -- diberi napas tiap
+        -- 200 item, sama seperti sapuan applyFpsBoost(), supaya tidak terasa
+        -- macet sesaat.
+        if dihapus % 200 == 0 then task.wait() end
     end
     if dihapus > 0 then
         status(string.format("[FPS] %d tanaman/buah di kebun sendiri dihapus", dihapus))
