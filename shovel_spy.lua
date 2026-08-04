@@ -27,6 +27,11 @@
     bagian bawah, jadi kalau ada yang gagal DI DALAM skrip ini (bukan gagal
     mengambil skripnya lewat HttpGet), pesannya akan tercetak jelas lewat
     warn("[SPY] GAGAL: ...") -- bukan cuma pesan generik dari executor.
+
+    Tiap baris [SPY] sekarang diberi cap waktu "+X.XXs" (detik sejak skrip
+    ini mulai jalan). Kalau kamu mencabut BEBERAPA tanaman berturut-turut
+    saat spy aktif, selisih antar cap waktu itu yang dipakai untuk melihat
+    apakah ada cooldown/jeda minimum yang dipaksakan server antar shovel.
 ]]
 
 print(string.format(
@@ -38,12 +43,17 @@ local ok, err = pcall(function()
         error("Executor ini tidak punya hookmetamethod -- spy tidak bisa jalan di sini.")
     end
 
+    -- Dipakai catat() untuk cap waktu relatif -- lebih gampang dibaca
+    -- daripada jam absolut kalau yang mau dilihat cuma SELISIH antar shovel.
+    local mulai = tick()
+
     local tulisLog = typeof(writefile) == "function"
     if tulisLog then
         pcall(function() writefile("shovel_log.txt", "") end)
     end
 
-    local function catat(baris)
+    local function catat(pesan)
+        local baris = string.format("[+%.2fs] %s", tick() - mulai, pesan)
         print(baris)
         if tulisLog then
             pcall(function()
