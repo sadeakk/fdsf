@@ -137,6 +137,15 @@ local Config = {
     -- waktunya yang bisa diatur, bukan on/off-nya.
     MaksTungguSiap  = tonumber(cfg.MaksTungguSiap) or 60,
     JedaKlikSiap    = tonumber(cfg.JedaKlikSiap) or 1.5,
+
+    -- Jeda TETAP tambahan SETELAH duniaSudahSiap() terdeteksi true, sebelum
+    -- lanjut ke black screen/FPS boost/dst. Ditambahkan karena kamera masih
+    -- bisa macet seperti layar loading walau semua pemeriksaan readiness
+    -- (HRP, Humanoid, leaderstats Leaves, Gardens, NPCS, CameraType Custom)
+    -- sudah lolos -- animasi intro/home Fall Harvest sepertinya kadang belum
+    -- BENAR-BENAR selesai walau kamera sudah balik ke Custom lebih dulu.
+    -- Default 60 detik. Boleh diset 0 untuk mematikan jeda ini sama sekali.
+    JedaSetelahSiap = tonumber(cfg.JedaSetelahSiap) or 60,
 }
 
 local function status(t)
@@ -1286,6 +1295,16 @@ local instanceSaya = _G.FHInstance
 -- 1. TUNGGU DUNIA SIAP
 status(string.format("Aktif (#%d) — [1/5] menunggu dunia siap...", instanceSaya))
 tungguGameSiap()
+
+-- Jeda tetap tambahan SETELAH readiness lolos -- lihat catatan panjang di
+-- Config.JedaSetelahSiap. Ditaruh sebelum black screen/FPS boost supaya
+-- tidak ada apa pun (termasuk FieldOfView di applyFpsBoost) menyentuh kamera
+-- selagi animasi intro/home kemungkinan masih benar-benar berjalan.
+if Config.JedaSetelahSiap > 0 then
+    status(string.format("Aktif (#%d) — jeda tambahan %ds sebelum lanjut...",
+        instanceSaya, Config.JedaSetelahSiap))
+    task.wait(Config.JedaSetelahSiap)
+end
 
 -- 2. BLACK SCREEN
 status(string.format("Aktif (#%d) — [2/5] memasang black screen...", instanceSaya))
