@@ -107,6 +107,29 @@ local Config = {
     -- tersangkut dan karakter berhenti di tengah jalan.
     Noclip        = cfg.Noclip ~= false,
 
+    -- ==========================================================
+    -- HANCUR PETA JAUH DARI NPC -- OPT-IN, MATI SECARA DEFAULT.
+    -- ==========================================================
+    -- Kalau dinyalakan: SEMUA BasePart di luar radius dari Sam/George/Steven
+    -- dihancurkan permanen -- termasuk SELURUH kebun, milik sendiri maupun
+    -- orang lain, tanpa pengecualian. Perlindungannya murni JARAK, bukan nama
+    -- part, karena struktur asli lantai/map Fall Harvest belum terverifikasi
+    -- dari klien asli -- ini caranya menghindari perlu menebak nama part.
+    --
+    -- Karakter DIPAKSA terbang ke Sam dulu (dan penghancuran DIBATALKAN kalau
+    -- gagal sampai) sebelum lantai mana pun dihancurkan -- lihat
+    -- hancurkanPetaJauh(). Ini supaya posisi karakter sendiri sudah pasti ada
+    -- di dalam radius aman pada saat penghancuran terjadi, bukan tergantung
+    -- kebetulan sudah dekat NPC atau belum.
+    --
+    -- SATU RISIKO YANG BELUM BISA DIHILANGKAN, WAJIB DIUJI DI SATU AKUN DULU:
+    -- kalau lantai sebenarnya Terrain (voxel), bukan Part biasa, sapuan ini
+    -- TIDAK menghapusnya sama sekali -- Terrain sengaja dilewati
+    -- (Terrain:Clear() terlalu berisiko, bisa ikut menghapus lantai di BAWAH
+    -- ketiga NPC juga, jadi tidak dipakai di sini).
+    HancurkanPeta   = cfg.HancurkanPeta == true,
+    RadiusAmanPeta  = tonumber(cfg.RadiusAmanPeta) or 50,
+
     -- Menunggu dunia siap TIDAK bisa dimatikan lewat config -- disengaja.
     -- Script ini dipakai tanpa pengawasan di cloud phone, jadi tidak boleh ada
     -- jalur yang membuatnya menembak beli/jual sebelum karakter dan dunia
@@ -764,6 +787,31 @@ local function pasangHookBrutal()
     end)
 end
 
+local hookHiasanTerpasang = false
+
+-- Sapuan awal (nukeLingkungan di applyFpsBoost) cuma sekali saat startup.
+-- Cuaca (folder "Weather"/"Rain"/"Clouds"/dll di atas) diganti-ganti oleh
+-- game seiring waktu (siklus cuaca) -- folder LAMA dihapus lalu digantikan
+-- folder BARU dengan nama sama. DescendantAdded di pasangHookBrutal() TIDAK
+-- menangkap ini karena folder sengaja dilewati di sana (jalur terpanas,
+-- ClassName Folder/Model dibuang duluan demi performa). Hook ini terpisah,
+-- pakai ChildAdded (bukan DescendantAdded) langsung di workspace, karena
+-- semua nama di WADAH_HIASAN selalu anak LANGSUNG workspace.
+local function pasangHookHiasanBaru()
+    if hookHiasanTerpasang then return end
+    hookHiasanTerpasang = true
+
+    workspace.ChildAdded:Connect(function(c)
+        if not Config.FpsBoost then return end
+        for _, nama in ipairs(WADAH_HIASAN) do
+            if c.Name == nama then
+                pcall(function() c:Destroy() end)
+                break
+            end
+        end
+    end)
+end
+
 local hookGardenTerpasang = false
 local jadwalBersihGardenAktif = false
 
@@ -895,6 +943,7 @@ local function applyFpsBoost()
 
     pasangHookBrutal()
     pasangHookGardenBaru()
+    pasangHookHiasanBaru()
 
     status("[FPS] Selesai")
 end
@@ -1003,6 +1052,94 @@ local function pulangKeParkir()
         return false
     end
     return pergiKe(titik, Config.JarakAman)
+end
+
+-- ==========================================================
+-- HANCUR PETA JAUH DARI NPC (opt-in, lihat Config.HancurkanPeta di atas)
+-- ==========================================================
+-- Sengaja TERPISAH dari bolehDibrutalkan()/plotSaya(): fungsi-fungsi itu
+-- SENGAJA melindungi kebun sendiri, sedangkan sapuan ini SENGAJA tidak --
+-- kalau Config.HancurkanPeta menyala, kebun sendiri pun ikut dihancurkan,
+-- sesuai permintaan (yang bertahan hanya lantai di sekitar NPC).
+local function posisiAmanDariHancur(pos)
+    for _, peran in ipairs({ "seed", "gear", "jual" }) do
+        local posNpc = posisiNPC(peran)
+        if posNpc and (posNpc - pos).Magnitude <= Config.RadiusAmanPeta then
+            return true
+        end
+    end
+    return false
+end
+
+local function hancurkanPetaJauh()
+    if not Config.HancurkanPeta then return 0 end
+
+    -- GAGAL-TERTUTUP, sama seperti bersihkanKebunOrang(): kalau salah satu
+    -- dari ketiga NPC belum termuat, radius amannya cuma terhitung dari NPC
+    -- yang kebetulan sudah ada -- lebih baik tidak menghancurkan apa pun sama
+    -- sekali daripada salah menghancurkan area yang seharusnya dilindungi.
+    local posSeed = posisiNPC("seed")
+    local posGear = posisiNPC("gear")
+    local posJual = posisiNPC("jual")
+    if not (posSeed and posGear and posJual) then
+        status("[HANCUR] Belum semua NPC (seed/gear/jual) ketemu — dilewati demi keamanan")
+        return 0
+    end
+
+    -- WAJIB sudah berdiri di dekat NPC SEBELUM menghancurkan apa pun. Fungsi
+    -- ini bisa dipanggil saat karakter masih di titik spawn awal (belum tentu
+    -- di dalam radius aman) -- kalau lantai di luar radius langsung lenyap
+    -- sementara karakter masih di sana, dia jatuh ke void tepat di tempat dia
+    -- berdiri. Memaksa terbang ke Sam dulu memastikan posisinya sendiri sudah
+    -- pasti aman pada saat penghancuran benar-benar terjadi. Kalau gagal
+    -- sampai, seluruh penghancuran DIBATALKAN -- lebih baik tidak jalan sama
+    -- sekali daripada menghancurkan lantai di bawah kaki sendiri.
+    if not pergiKe(posSeed, Config.JarakAman) then
+        status("[HANCUR] Gagal mencapai NPC dulu — penghancuran DIBATALKAN demi keamanan")
+        return 0
+    end
+
+    local char = LocalPlayer.Character
+    local dihancurkan = 0
+
+    for _, d in ipairs(workspace:GetDescendants()) do
+        if d:IsA("BasePart") and d.Parent and d ~= workspace.Terrain then
+            local dilindungi = (char ~= nil) and d:IsDescendantOf(char)
+
+            if not dilindungi then
+                -- NPC sendiri (dan apa pun yang menempel padanya) tetap wajib
+                -- utuh -- pemeriksaan yang sama seperti bolehDibrutalkan().
+                local kini, dalam = d, 0
+                while kini and kini ~= workspace and dalam < 5 do
+                    if kini:FindFirstChildWhichIsA("Humanoid") then
+                        dilindungi = true
+                        break
+                    end
+                    local n = string.lower(kini.Name)
+                    if n == "npcs" or n == "npc" then
+                        dilindungi = true
+                        break
+                    end
+                    kini = kini.Parent
+                    dalam = dalam + 1
+                end
+            end
+
+            if not dilindungi and posisiAmanDariHancur(d.Position) then
+                dilindungi = true
+            end
+
+            if not dilindungi then
+                pcall(function() d:Destroy() end)
+                dihancurkan = dihancurkan + 1
+            end
+        end
+    end
+
+    status(string.format(
+        "[HANCUR] %d part di luar radius %d studs dari NPC dihancurkan (kebun sendiri TERMASUK)",
+        dihancurkan, Config.RadiusAmanPeta))
+    return dihancurkan
 end
 
 -- ==========================================================
@@ -1147,24 +1284,34 @@ _G.FHInstance = (_G.FHInstance or 0) + 1
 local instanceSaya = _G.FHInstance
 
 -- 1. TUNGGU DUNIA SIAP
-status(string.format("Aktif (#%d) — [1/4] menunggu dunia siap...", instanceSaya))
+status(string.format("Aktif (#%d) — [1/5] menunggu dunia siap...", instanceSaya))
 tungguGameSiap()
 
 -- 2. BLACK SCREEN
-status(string.format("Aktif (#%d) — [2/4] memasang black screen...", instanceSaya))
+status(string.format("Aktif (#%d) — [2/5] memasang black screen...", instanceSaya))
 pasangBlackScreen()
 
 -- 3. ANTI-AFK
 if Config.AntiAFK then
-    status(string.format("Aktif (#%d) — [3/4] memasang anti-AFK...", instanceSaya))
+    status(string.format("Aktif (#%d) — [3/5] memasang anti-AFK...", instanceSaya))
     pasangAntiAFK()
 end
 
 -- 4. FPS BOOST -- sapuan berat, cukup SEKALI di sini saat startup. Kebun
 -- orang lain dimuat bertahap, jadi dibersihkan lagi secara berkala di dalam
 -- siklus (lihat fase "bersih-kebun" di bawah), bukan diulang di sini.
-status(string.format("Aktif (#%d) — [4/4] FPS boost...", instanceSaya))
+status(string.format("Aktif (#%d) — [4/5] FPS boost...", instanceSaya))
 pcall(applyFpsBoost)
+
+-- 5. HANCUR PETA JAUH DARI NPC -- opt-in, MATI kalau Config.HancurkanPeta
+-- tidak disetel true. Lihat catatan risiko panjang di Config.HancurkanPeta
+-- sebelum menyalakan ini pada semua akun sekaligus.
+if Config.HancurkanPeta then
+    status(string.format(
+        "Aktif (#%d) — [5/5] Config.HancurkanPeta AKTIF: menghancurkan peta di luar radius %d studs dari NPC...",
+        instanceSaya, Config.RadiusAmanPeta))
+    pcall(hancurkanPetaJauh)
+end
 
 status(string.format("Aktif (#%d) — mode ringkas: beli + jual", instanceSaya))
 
@@ -1190,6 +1337,10 @@ task.spawn(function()
                 fase[#fase + 1] = { "bersih-kebun", function()
                     bersihkanKebunOrang(false)
                     bersihkanFruitPlantSendiri()
+                    -- Konten baru (kebun/dekorasi pemain lain) terus dimuat
+                    -- server seiring waktu -- diulang di sini biar tidak
+                    -- muncul lagi setelah sapuan startup.
+                    if Config.HancurkanPeta then hancurkanPetaJauh() end
                 end }
             end
 
