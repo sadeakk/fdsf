@@ -117,7 +117,6 @@ local Config = {
 }
 
 local function status(t)
-    _G.FallHarvestDebug = t
     print("[FH] " .. t)
 end
 
@@ -386,18 +385,8 @@ end
 -- ==========================================================
 -- BLACK SCREEN + HUD STATUS
 -- ==========================================================
-_G.FHRiwayat = _G.FHRiwayat or {}
-
-local function catatRiwayat(teks)
-    table.insert(_G.FHRiwayat, 1, teks)
-    -- Dibatasi 8 baris: kotaknya tidak bisa di-scroll, jadi menyimpan lebih
-    -- banyak hanya membuat baris terbawah terpotong tanpa pernah terbaca.
-    while #_G.FHRiwayat > 8 do table.remove(_G.FHRiwayat) end
-end
-
--- Dipakai HUD (label Leaves) maupun checkpoint 5-menit -- satu fungsi supaya
--- keduanya tidak bisa berbeda format. Menangani negatif juga (checkpoint bisa
--- menampilkan selisih minus kalau Leaves berkurang).
+-- Dipakai HUD untuk menampilkan Leaves. Menangani negatif juga meski HUD
+-- sekarang cuma menampilkan angka positif -- tetap aman kalau dipakai ulang.
 local function ringkasAngka(n)
     n = tonumber(n) or 0
     local tanda = n < 0 and "-" or ""
@@ -407,40 +396,6 @@ local function ringkasAngka(n)
     elseif a >= 1e6 then return tanda .. string.format("%.2fM", a / 1e6)
     elseif a >= 1e3 then return tanda .. string.format("%.1fK", a / 1e3)
     else return tostring(n) end
-end
-
--- Ringkasan tas untuk panel HUD kiri/kanan. Dibedakan lewat ATRIBUT tool,
--- bukan nama -- sama seperti dipakai di seluruh script ini (SeedTool untuk
--- seed, Sprinkler/WateringCan untuk gear). Shovel/Build sengaja dilewati:
--- dimiliki semua pemain, jadi menampilkannya cuma "Shovel x1" tanpa arti.
-local function bacaInventoryRingkas()
-    local seedMap, gearMap = {}, {}
-    for _, wadah in ipairs({ LocalPlayer:FindFirstChild("Backpack"), LocalPlayer.Character }) do
-        if wadah then
-            for _, t in ipairs(wadah:GetChildren()) do
-                if t:IsA("Tool") then
-                    local seedName = t:GetAttribute("SeedTool")
-                    local gearName = t:GetAttribute("Sprinkler") or t:GetAttribute("WateringCan")
-                    if seedName then
-                        seedMap[seedName] = (seedMap[seedName] or 0) + (tonumber(t:GetAttribute("Count")) or 1)
-                    elseif gearName then
-                        gearMap[gearName] = (gearMap[gearName] or 0) + 1
-                    end
-                end
-            end
-        end
-    end
-    return seedMap, gearMap
-end
-
-local function formatInventoryHUD(map, simbol)
-    local baris = {}
-    for nama, jumlah in pairs(map) do
-        baris[#baris + 1] = string.format("%s %s x%d", simbol, nama, jumlah)
-    end
-    if #baris == 0 then return "(kosong)" end
-    table.sort(baris)
-    return table.concat(baris, "\n")
 end
 
 local function pasangBlackScreen()
@@ -528,97 +483,6 @@ local function pasangBlackScreen()
         strokeTengah.Color = Color3.fromRGB(0, 0, 0)
         strokeTengah.Parent = tengah
 
-        local riwayat = Instance.new("TextLabel")
-        riwayat.Size = UDim2.new(0.4, 0, 0.3, 0)
-        riwayat.Position = UDim2.new(0.5, 0, 0.5, 0)
-        riwayat.AnchorPoint = Vector2.new(0.5, 0)
-        riwayat.BackgroundTransparency = 1
-        riwayat.Text = ""
-        riwayat.TextColor3 = Color3.fromRGB(150, 255, 150)
-        riwayat.TextSize = 14
-        riwayat.TextXAlignment = Enum.TextXAlignment.Center
-        riwayat.TextYAlignment = Enum.TextYAlignment.Top
-        riwayat.TextWrapped = true
-        riwayat.Font = Enum.Font.GothamBold
-        riwayat.ZIndex = 10
-        riwayat.Parent = bg
-        local strokeRiwayat = Instance.new("UIStroke")
-        strokeRiwayat.Thickness = 1.2
-        strokeRiwayat.Color = Color3.fromRGB(0, 0, 0)
-        strokeRiwayat.Parent = riwayat
-
-        -- Panel gear (kiri) & seed (kanan) di ruang kosong pinggir layar,
-        -- persis di posisi dua gambar yang dulu dihapus dari sini.
-        local panelGear = Instance.new("TextLabel")
-        panelGear.Size = UDim2.new(0.26, 0, 0.5, 0)
-        panelGear.Position = UDim2.new(0.03, 0, 0.5, 0)
-        panelGear.AnchorPoint = Vector2.new(0, 0.5)
-        panelGear.BackgroundTransparency = 1
-        panelGear.Text = "⚙️ GEAR"
-        panelGear.TextColor3 = Color3.fromRGB(180, 210, 255)
-        panelGear.TextSize = 14
-        panelGear.TextXAlignment = Enum.TextXAlignment.Left
-        panelGear.TextYAlignment = Enum.TextYAlignment.Top
-        panelGear.TextWrapped = true
-        panelGear.Font = Enum.Font.GothamBold
-        panelGear.ZIndex = 10
-        panelGear.Parent = bg
-        local strokeGear = Instance.new("UIStroke")
-        strokeGear.Thickness = 1
-        strokeGear.Color = Color3.fromRGB(0, 0, 0)
-        strokeGear.Parent = panelGear
-
-        local panelSeed = Instance.new("TextLabel")
-        panelSeed.Size = UDim2.new(0.26, 0, 0.5, 0)
-        panelSeed.Position = UDim2.new(0.97, 0, 0.5, 0)
-        panelSeed.AnchorPoint = Vector2.new(1, 0.5)
-        panelSeed.BackgroundTransparency = 1
-        panelSeed.Text = "🌱 SEED"
-        panelSeed.TextColor3 = Color3.fromRGB(180, 255, 190)
-        panelSeed.TextSize = 14
-        panelSeed.TextXAlignment = Enum.TextXAlignment.Right
-        panelSeed.TextYAlignment = Enum.TextYAlignment.Top
-        panelSeed.TextWrapped = true
-        panelSeed.Font = Enum.Font.GothamBold
-        panelSeed.ZIndex = 10
-        panelSeed.Parent = bg
-        local strokeSeed = Instance.new("UIStroke")
-        strokeSeed.Thickness = 1
-        strokeSeed.Color = Color3.fromRGB(0, 0, 0)
-        strokeSeed.Parent = panelSeed
-
-        local perf = Instance.new("TextLabel")
-        perf.Size = UDim2.new(0.5, 0, 0.05, 0)
-        perf.Position = UDim2.new(0.5, 0, 0.02, 0)
-        perf.AnchorPoint = Vector2.new(0.5, 0)
-        perf.BackgroundTransparency = 1
-        perf.Text = "FPS: - | Ping: - ms | Mem: - MB"
-        perf.TextColor3 = Color3.fromRGB(200, 200, 200)
-        perf.TextSize = 14
-        perf.Font = Enum.Font.Code
-        perf.ZIndex = 10
-        perf.Parent = bg
-        local strokePerf = Instance.new("UIStroke")
-        strokePerf.Thickness = 1
-        strokePerf.Color = Color3.fromRGB(0, 0, 0)
-        strokePerf.Parent = perf
-
-        local debug = Instance.new("TextLabel")
-        debug.Size = UDim2.new(0.8, 0, 0.05, 0)
-        debug.Position = UDim2.new(0.5, 0, 0.08, 0)
-        debug.AnchorPoint = Vector2.new(0.5, 0)
-        debug.BackgroundTransparency = 1
-        debug.TextColor3 = Color3.fromRGB(255, 255, 0)
-        debug.TextSize = 13
-        debug.Font = Enum.Font.Code
-        debug.ZIndex = 10
-        debug.Text = "Menunggu kaitun..."
-        debug.Parent = bg
-        local strokeDebug = Instance.new("UIStroke")
-        strokeDebug.Thickness = 1
-        strokeDebug.Color = Color3.fromRGB(0, 0, 0)
-        strokeDebug.Parent = debug
-
         -- Ditempel ke CoreGui kalau executor mendukung, supaya tidak ikut hilang
         -- saat karakter respawn.
         local berhasil = pcall(function()
@@ -629,12 +493,6 @@ local function pasangBlackScreen()
         end
 
         task.spawn(function()
-            local Stats = game:GetService("Stats")
-            -- Menit terakhir panel gear/seed direfresh -- dibandingkan
-            -- terhadap jam sungguhan (os.date), bukan dihitung mundur dari
-            -- saat script mulai, supaya jatuh di menit bulat yang sama
-            -- persis tiap kali (:02, :07, :12, ... :57).
-            local menitRefreshTerakhir = nil
             while gui.Parent do
                 local daun = 0
                 pcall(function()
@@ -643,36 +501,6 @@ local function pasangBlackScreen()
                     if n then daun = n.Value end
                 end)
                 tengah.Text = "👤 " .. LocalPlayer.Name .. "\n🍃 " .. ringkasAngka(daun)
-
-                riwayat.Text = (#_G.FHRiwayat > 0)
-                    and ("📜 RIWAYAT:\n" .. table.concat(_G.FHRiwayat, "\n"))
-                    or ""
-
-                local ping, fps, mem = "0", "0", "0"
-                pcall(function()
-                    ping = string.split(Stats.Network.ServerStatsItem["Data Ping"]:GetValueString(), " ")[1] or "0"
-                end)
-                pcall(function() fps = tostring(math.floor(workspace:GetRealPhysicsFPS())) end)
-                pcall(function()
-                    mem = string.split(Stats.PerformanceStats.Memory:GetValueString(), " ")[1] or "0"
-                end)
-                perf.Text = string.format("🎮 FPS: %s  |  📶 Ping: %s ms  |  🧠 Mem: %s MB", fps, ping, mem)
-
-                if _G.FallHarvestDebug then debug.Text = tostring(_G.FallHarvestDebug) end
-
-                -- Bacaan tas lebih berat (menelusuri semua Tool di Backpack)
-                -- daripada baris lain di atas -- direfresh tiap 5 menit pas
-                -- di menit :02/:07/:12/.../:57, dan hanya SEKALI per menit itu
-                -- (loop ini sendiri berdetak tiap 1 detik, jadi tanpa penanda
-                -- menitRefreshTerakhir baris ini akan tertembak 60x berturut
-                -- selama menit yang sama).
-                local menitSekarang = tonumber(os.date("%M"))
-                if menitSekarang % 5 == 2 and menitSekarang ~= menitRefreshTerakhir then
-                    menitRefreshTerakhir = menitSekarang
-                    local seedMap, gearMap = bacaInventoryRingkas()
-                    panelGear.Text = "⚙️ GEAR\n" .. formatInventoryHUD(gearMap, "⚙️")
-                    panelSeed.Text = formatInventoryHUD(seedMap, "🌱") .. "\n🌱 SEED"
-                end
 
                 task.wait(1)
             end
@@ -1157,15 +985,29 @@ local function jumlahBuah()
     return tonumber(LocalPlayer:GetAttribute("FruitCount")) or 0
 end
 
+-- Titik parkir: SELALU di Sam, permanen -- tidak pernah kembali ke kebun
+-- ataupun titik tengah dengan George. Karakter "tinggal" di sini antar
+-- siklus -- karena sudah dekat Sam, beliDari() untuk seed tidak perlu
+-- terbang lagi saat membeli (pergiKe() langsung balik true kalau sudah
+-- dalam toleransi). Kalau Config.AutoBeliGear juga aktif, beli gear TETAP
+-- terbang ke George saat benar-benar membeli -- itu tidak bisa dihindari
+-- selama Sam dan George bukan di titik yang sama.
+local function titikParkir()
+    return (posisiNPC("seed"))
+end
+
+local function pulangKeParkir()
+    local titik = titikParkir()
+    if not titik then
+        status("[PULANG] Tidak ada NPC beli yang aktif untuk dijadikan titik parkir")
+        return false
+    end
+    return pergiKe(titik, Config.JarakAman)
+end
+
 -- ==========================================================
 -- AKSI: BELI & JUAL
 -- ==========================================================
--- Menghitung apa saja yang dibeli sejak checkpoint 5-menit terakhir --
--- dibaca dan dikosongkan oleh pasangCheckpointLeaves(). Tabel yang sama
--- (bukan disalin) sengaja dipakai kedua fungsi supaya keduanya tidak bisa
--- berbeda pendapat soal apa yang sudah "dilaporkan".
-local pembelianJendela = {}
-
 -- Dipakai bersama oleh beli seed dan beli gear -- satu-satunya beda adalah
 -- peran NPC yang didekati, remote yang ditembak, dan nama GUI shop-nya.
 local function beliDari(daftar, peran, tembak, labelNPC, namaGuiShop)
@@ -1219,7 +1061,6 @@ local function beliDari(daftar, peran, tembak, labelNPC, namaGuiShop)
             if ok then
                 dibeli = dibeli + 1
                 dibeliItemIni = dibeliItemIni + 1
-                pembelianJendela[s.nama] = (pembelianJendela[s.nama] or 0) + 1
                 gagalBerturut = 0
             else
                 gagalBerturut = gagalBerturut + 1
@@ -1248,7 +1089,6 @@ local function beliDari(daftar, peran, tembak, labelNPC, namaGuiShop)
         if dibeliItemIni > 0 then
             status(string.format("[BELI] %s x%d (%d Leaves, sisa %d)",
                 s.nama, dibeliItemIni, harga, leaves()))
-            catatRiwayat(string.format("🛒 %s x%d (%d)", s.nama, dibeliItemIni, harga))
         end
     end
     return dibeli
@@ -1278,15 +1118,11 @@ local function jual()
         end
     end
 
-    -- SellAll tidak mengembalikan berapa Leaves yang didapat -- dibaca lewat
-    -- selisih leaderstats sebelum/sesudah, bukan dari hasil remote.
-    local sebelum = leaves()
-
     -- Daily Deal DULU, sebelum SellAll. Urutan ini disengaja: begitu SellAll
     -- jalan, buah yang sebenarnya termasuk daily deal sudah keburu terjual
-    -- lewat jalur biasa dan bonusnya hilang. Tidak digerbang waktu lagi --
-    -- jual() sendiri sekarang hanya dipanggil pemanggil-nya saat jumlahBuah()
-    -- > 0, jadi ini sudah otomatis tidak pernah menembak ke tas kosong.
+    -- lewat jalur biasa dan bonusnya hilang. Tidak digerbang waktu -- jual()
+    -- sendiri sekarang hanya dipanggil pemanggilnya saat jumlahBuah() > 0,
+    -- jadi ini sudah otomatis tidak pernah menembak ke tas kosong.
     if Config.DailyDeal then
         pcall(function() Networking.NPCS.UseDailyDealAll:Fire() end)
         task.wait(Config.JedaAksi)
@@ -1298,85 +1134,43 @@ local function jual()
     pcall(function() Networking.NPCS.SellAll:Fire() end)
 
     -- Leaves butuh waktu untuk direplikasi server -> klien; tanpa jeda ini
-    -- selisihnya sering masih terbaca 0 padahal penjualannya sendiri berhasil.
+    -- angkanya di status() sering masih basi padahal penjualannya berhasil.
     task.wait(1)
-    local sesudah = leaves()
-    local untung = sesudah - sebelum
-
-    status(string.format("[JUAL] SellAll dikirim (Leaves: %d)", sesudah))
-    -- Riwayat hanya dicatat kalau BENAR-BENAR ada buah yang laku (Leaves naik).
-    -- jual() sendiri sudah digerbang jumlahBuah()>0 oleh pemanggilnya, tapi itu
-    -- tidak menjamin SellAll BERHASIL (bisa gagal jaringan, atau FruitCount
-    -- sempat basi) -- kalau baris "tidak jual apa-apa" ikut masuk riwayat, 8
-    -- barisnya cepat penuh oleh entri kosong dan menenggelamkan riwayat
-    -- beli/jual yang sungguhan.
-    if untung > 0 then
-        catatRiwayat(string.format("💰 Jual +%s (Leaves: %s)", ringkasAngka(untung), ringkasAngka(sesudah)))
-    end
+    status(string.format("[JUAL] SellAll dikirim (Leaves: %d)", leaves()))
     return true
 end
 
--- Ringkasan pembelian sejak checkpoint terakhir, urut nama.
-local function ringkasPembelian(map)
-    local bagian = {}
-    for nama, jumlah in pairs(map) do
-        bagian[#bagian + 1] = string.format("%s x%d", nama, jumlah)
-    end
-    if #bagian == 0 then return "tidak ada pembelian baru" end
-    table.sort(bagian)
-    return table.concat(bagian, ", ")
-end
-
--- Checkpoint 5 menit: satu baris riwayat berisi apa saja yang dibeli sejak
--- checkpoint sebelumnya, plus Leaves sekarang dan selisihnya. Ini terpisah
--- dari baris beli/jual yang sudah live per-transaksi -- checkpoint ini untuk
--- melihat ringkasan tanpa harus menonton terus, terutama karena stok shop
--- sendiri hanya berubah tiap ~5 menit (restock).
-local function pasangCheckpointLeaves()
-    if not Config.BlackScreen then return end
-    -- _G.FHInstance sudah bertambah sebelum fungsi ini dipanggil (lihat LOOP
-    -- UTAMA), jadi nilai yang disalin di sini adalah nomor instance SAAT INI.
-    -- Tanpa penjagaan ini, re-run di sesi yang sama (loadstring dijalankan
-    -- ulang tanpa rejoin) meninggalkan checkpoint lama tetap jalan selamanya,
-    -- dan riwayat kebanjiran baris checkpoint ganda tiap 5 menit.
-    local instanceSayaLokal = _G.FHInstance
-    task.spawn(function()
-        local awal = leaves()
-        while _G.FHInstance == instanceSayaLokal do
-            task.wait(300)
-            if _G.FHInstance ~= instanceSayaLokal then break end
-
-            local sekarang = leaves()
-            local delta = sekarang - awal
-            local deltaTeks = (delta >= 0 and "+" or "") .. ringkasAngka(delta)
-
-            catatRiwayat(string.format("⏱ %s | %s | 🍃 %s (%s)",
-                os.date("%H:%M"), ringkasPembelian(pembelianJendela),
-                ringkasAngka(sekarang), deltaTeks))
-
-            -- Dikosongkan di TEMPAT, bukan diganti tabel baru -- beliDari()
-            -- memegang acuan ke tabel yang sama persis.
-            for k in pairs(pembelianJendela) do pembelianJendela[k] = nil end
-            awal = sekarang
-        end
-    end)
-end
-
 -- ==========================================================
--- LOOP UTAMA
+-- URUTAN STARTUP
 -- ==========================================================
 _G.FHInstance = (_G.FHInstance or 0) + 1
 local instanceSaya = _G.FHInstance
 
-status(string.format("Aktif (#%d) — menunggu dunia siap...", instanceSaya))
+-- 1. TUNGGU DUNIA SIAP
+status(string.format("Aktif (#%d) — [1/4] menunggu dunia siap...", instanceSaya))
 tungguGameSiap()
+
+-- 2. BLACK SCREEN
+status(string.format("Aktif (#%d) — [2/4] memasang black screen...", instanceSaya))
+pasangBlackScreen()
+
+-- 3. ANTI-AFK
+if Config.AntiAFK then
+    status(string.format("Aktif (#%d) — [3/4] memasang anti-AFK...", instanceSaya))
+    pasangAntiAFK()
+end
+
+-- 4. FPS BOOST -- sapuan berat, cukup SEKALI di sini saat startup. Kebun
+-- orang lain dimuat bertahap, jadi dibersihkan lagi secara berkala di dalam
+-- siklus (lihat fase "bersih-kebun" di bawah), bukan diulang di sini.
+status(string.format("Aktif (#%d) — [4/4] FPS boost...", instanceSaya))
+pcall(applyFpsBoost)
 
 status(string.format("Aktif (#%d) — mode ringkas: beli + jual", instanceSaya))
 
-pasangBlackScreen()
-pasangCheckpointLeaves()
-if Config.AntiAFK then pasangAntiAFK() end
-
+-- ==========================================================
+-- LOOP UTAMA
+-- ==========================================================
 task.spawn(function()
     local putaranSiklus = 0
     while instanceSaya == _G.FHInstance do
@@ -1388,12 +1182,11 @@ task.spawn(function()
         local okSiklus, errSiklus = pcall(function()
             local fase = {}
 
-            -- Sapuan berat cukup SEKALI di siklus pertama; kebun orang lain
-            -- dimuat bertahap, jadi dibersihkan lagi secara berkala.
-            if putaranSiklus == 1 then
-                fase[#fase + 1] = { "fps-boost", applyFpsBoost }
-            elseif Config.SiklusBersihKebun > 0
-                   and putaranSiklus % Config.SiklusBersihKebun == 0 then
+            -- Kebun orang lain dimuat bertahap seiring pemain berdatangan,
+            -- jadi dibersihkan lagi secara berkala (bukan cuma sekali di
+            -- startup seperti FPS boost).
+            if Config.SiklusBersihKebun > 0
+               and putaranSiklus % Config.SiklusBersihKebun == 0 then
                 fase[#fase + 1] = { "bersih-kebun", function()
                     bersihkanKebunOrang(false)
                     bersihkanFruitPlantSendiri()
@@ -1422,6 +1215,12 @@ task.spawn(function()
                     if #stok > 0 then beliGear(stok) end
                 end }
             end
+
+            -- Terakhir tiap siklus: pulang ke titik parkir antar-NPC. Kalau
+            -- sudah di sana, pergiKe() langsung balik true tanpa terbang --
+            -- jadi murah dipanggil tiap siklus, dan bikin beliDari() tidak
+            -- perlu terbang jauh lagi saat waktunya membeli.
+            fase[#fase + 1] = { "pulang-parkir", pulangKeParkir }
 
             for _, f in ipairs(fase) do
                 if instanceSaya ~= _G.FHInstance then break end
