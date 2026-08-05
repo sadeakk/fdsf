@@ -1212,10 +1212,17 @@ end
 -- SENGAJA melindungi kebun sendiri, sedangkan sapuan ini SENGAJA tidak --
 -- kalau Config.HancurkanPeta menyala, kebun sendiri pun ikut dihancurkan,
 -- sesuai permintaan (yang bertahan hanya lantai di sekitar NPC).
-local function posisiAmanDariHancur(pos)
+-- marginUkuran: setengah diagonal bounding box part (d.Size.Magnitude / 2)
+-- kalau ada. WAJIB dipakai untuk part berukuran besar -- tanpa ini, part
+-- lantai yang PUSATNYA jauh dari NPC (mis. satu lantai raksasa) tetap
+-- dihitung "jauh" dan dihancurkan utuh walau geometrinya sendiri MELUAS
+-- sampai ke bawah kaki NPC. Ini persis yang bikin lantai di bawah NPC
+-- ikut hilang padahal NPC-nya sendiri (objek terpisah) tetap dilindungi.
+local function posisiAmanDariHancur(pos, marginUkuran)
+    marginUkuran = marginUkuran or 0
     for _, peran in ipairs({ "seed", "gear", "jual" }) do
         local posNpc = posisiNPC(peran)
-        if posNpc and (posNpc - pos).Magnitude <= Config.RadiusAmanPeta then
+        if posNpc and (posNpc - pos).Magnitude <= Config.RadiusAmanPeta + marginUkuran then
             return true
         end
     end
@@ -1276,8 +1283,11 @@ local function hancurkanPetaJauh()
                 end
             end
 
-            if not dilindungi and posisiAmanDariHancur(d.Position) then
-                dilindungi = true
+            if not dilindungi then
+                local okSize, margin = pcall(function() return d.Size.Magnitude / 2 end)
+                if posisiAmanDariHancur(d.Position, okSize and margin or 0) then
+                    dilindungi = true
+                end
             end
 
             if not dilindungi then
@@ -1334,11 +1344,25 @@ local function hancurkanTerrainJauh()
     while x < luar do
         local z = -luar
         while z < luar do
-            local pusatX, pusatZ = tengah.X + x + sel / 2, tengah.Z + z + sel / 2
+            -- Batas kotak sel INI (bukan cuma titik pusatnya) -- dipakai di
+            -- bawah untuk uji tumpang-tindih lingkaran-vs-kotak yang benar.
+            local minX, maxX = tengah.X + x, tengah.X + x + sel
+            local minZ, maxZ = tengah.Z + z, tengah.Z + z + sel
 
             local dekatNPC = false
             for _, posNpc in ipairs({ posSeed, posGear, posJual }) do
-                local jarakDatar = (Vector2.new(pusatX, pusatZ) - Vector2.new(posNpc.X, posNpc.Z)).Magnitude
+                -- Titik TERDEKAT di dalam kotak sel ini ke posisi NPC --
+                -- BUKAN jarak dari pusat sel. Sel berukuran 40 studs vs
+                -- radius 20 studs berarti banyak sel yang pusatnya di luar
+                -- radius tapi TEPINYA masih tepat di bawah kaki NPC -- kalau
+                -- cuma pusat yang dicek, sel semacam itu salah dianggap
+                -- "jauh" dan dibersihkan, padahal sebagian isinya justru
+                -- persis di bawah NPC. Uji ini (clamp lalu ukur jarak)
+                -- benar secara geometris: true kalau KOTAK SEL manapun
+                -- bagiannya menyentuh lingkaran radius di sekitar NPC.
+                local titikX = math.clamp(posNpc.X, minX, maxX)
+                local titikZ = math.clamp(posNpc.Z, minZ, maxZ)
+                local jarakDatar = (Vector2.new(titikX, titikZ) - Vector2.new(posNpc.X, posNpc.Z)).Magnitude
                 if jarakDatar <= Config.RadiusAmanPeta then
                     dekatNPC = true
                     break
