@@ -870,38 +870,35 @@ local function pasangHookGardenBaru()
     end)
 end
 
-local function applyFpsBoost()
+-- Bagian FPS boost yang TIDAK menyentuh kamera/Lighting sama sekali --
+-- hanya kebun dan dekorasi di workspace. Aman dijalankan SECARA PARALEL
+-- dengan tungguGameSiap()/Config.JedaSetelahSiap (lihat URUTAN STARTUP),
+-- supaya kebun orang lain sudah mulai dibersihkan sementara wait yang
+-- lain masih berjalan -- bukan menunggu wait itu selesai dulu baru mulai.
+--
+-- SENGAJA dipisah dari applyFpsBoost(): FieldOfView/Lighting.Technology
+-- DI SANA wajib menunggu dunia+kamera benar-benar siap (lihat catatan
+-- panjang di duniaSudahSiap soal kamera macet), sedangkan pembersihan
+-- kebun di sini sama sekali tidak bergantung pada status kamera.
+local function bersihkanAwal()
     if not Config.FpsBoost then return end
-    status("[FPS] Membersihkan dekorasi berat...")
+
+    -- Fungsi ini bisa mulai jalan SEBELUM Gardens sempat termuat sama sekali
+    -- (karena dipanggil paralel, bukan setelah tungguGameSiap()). Tanpa
+    -- penantian ini, pasangHookGardenBaru() di bawah bisa gagal terpasang
+    -- PERMANEN untuk sisa sesi kalau Gardens belum ada sama sekali saat
+    -- dipanggil -- fungsi itu tidak mencoba lagi sendiri sesudahnya.
+    local batasGardens = tick() + Config.MaksTungguSiap
+    while tick() < batasGardens and not workspace:FindFirstChild("Gardens") do
+        task.wait(0.5)
+    end
+
+    status("[FPS] Membersihkan kebun & dekorasi (paralel sambil menunggu dunia siap)...")
 
     bersihkanKebunOrang(true)
     bersihkanFruitPlantSendiri()
 
     local nWadah = nukeLingkungan()
-
-    pcall(function()
-        local Lighting = game:GetService("Lighting")
-        Lighting.GlobalShadows = false
-        Lighting.FogEnd = 9e9
-        Lighting.Brightness = 0
-        -- Teknologi rendering termurah yang Roblox punya -- tidak ada kalkulasi
-        -- shadow map/voxel lighting sama sekali. Ini pengaruhnya paling besar
-        -- ke FPS dari semua pengaturan Lighting di sini.
-        Lighting.Technology = Enum.Technology.Compatibility
-        for _, c in ipairs(Lighting:GetChildren()) do
-            if c:IsA("BloomEffect") or c:IsA("BlurEffect") or c:IsA("ColorCorrectionEffect")
-               or c:IsA("SunRaysEffect") or c:IsA("DepthOfFieldEffect")
-               or c:IsA("Atmosphere") or c:IsA("Sky") then
-                c:Destroy()
-            end
-        end
-    end)
-
-    -- FOV sempit = lebih sedikit objek yang masuk frustum kamera untuk
-    -- dirender. Dulu ini nempel di pasangBlackScreen(), padahal FOV kecil
-    -- adalah penghematan render, bukan urusan layar hitam -- sekarang berlaku
-    -- kapan pun FpsBoost aktif, terlepas dari BlackScreen nyala atau tidak.
-    pcall(function() workspace.CurrentCamera.FieldOfView = 30 end)
 
     local hitung, kena = 0, 0
     for _, d in ipairs(workspace:GetDescendants()) do
@@ -926,6 +923,43 @@ local function applyFpsBoost()
         status(string.format("[FPS] %d wadah hiasan, %d objek dibrutalkan, %d efek/suara dimatikan",
             nWadah, kena, n))
     end)
+
+    pasangHookBrutal()
+    pasangHookGardenBaru()
+    pasangHookHiasanBaru()
+end
+
+-- Bagian FPS boost yang MENYENTUH kamera/Lighting -- tetap wajib menunggu
+-- dunia+kamera benar-benar siap (lihat duniaSudahSiap), jadi tetap
+-- dipanggil SETELAH tungguGameSiap()/JedaSetelahSiap selesai, bukan
+-- diparalelkan seperti bersihkanAwal() di atas.
+local function applyFpsBoost()
+    if not Config.FpsBoost then return end
+    status("[FPS] Menyesuaikan lighting/kamera/kualitas...")
+
+    pcall(function()
+        local Lighting = game:GetService("Lighting")
+        Lighting.GlobalShadows = false
+        Lighting.FogEnd = 9e9
+        Lighting.Brightness = 0
+        -- Teknologi rendering termurah yang Roblox punya -- tidak ada kalkulasi
+        -- shadow map/voxel lighting sama sekali. Ini pengaruhnya paling besar
+        -- ke FPS dari semua pengaturan Lighting di sini.
+        Lighting.Technology = Enum.Technology.Compatibility
+        for _, c in ipairs(Lighting:GetChildren()) do
+            if c:IsA("BloomEffect") or c:IsA("BlurEffect") or c:IsA("ColorCorrectionEffect")
+               or c:IsA("SunRaysEffect") or c:IsA("DepthOfFieldEffect")
+               or c:IsA("Atmosphere") or c:IsA("Sky") then
+                c:Destroy()
+            end
+        end
+    end)
+
+    -- FOV sempit = lebih sedikit objek yang masuk frustum kamera untuk
+    -- dirender. Dulu ini nempel di pasangBlackScreen(), padahal FOV kecil
+    -- adalah penghematan render, bukan urusan layar hitam -- sekarang berlaku
+    -- kapan pun FpsBoost aktif, terlepas dari BlackScreen nyala atau tidak.
+    pcall(function() workspace.CurrentCamera.FieldOfView = 30 end)
 
     if Config.BatasFps and Config.BatasFps > 0 and typeof(setfpscap) == "function" then
         pcall(setfpscap, Config.BatasFps)
@@ -964,10 +998,6 @@ local function applyFpsBoost()
             status(string.format("[FPS] %d part kebun dipulihkan CanTouch-nya", pulih))
         end
     end)
-
-    pasangHookBrutal()
-    pasangHookGardenBaru()
-    pasangHookHiasanBaru()
 
     status("[FPS] Selesai")
 end
@@ -1307,8 +1337,15 @@ end
 _G.FHInstance = (_G.FHInstance or 0) + 1
 local instanceSaya = _G.FHInstance
 
--- 1. TUNGGU DUNIA SIAP
-status(string.format("Aktif (#%d) — [1/5] menunggu dunia siap...", instanceSaya))
+-- 1. TUNGGU DUNIA SIAP -- kebun & dekorasi orang lain mulai dibersihkan
+-- SECARA PARALEL di sini (bersihkanAwal, task.spawn terpisah), bukan
+-- menunggu wait ini selesai dulu -- itu bagian yang aman dari FPS boost,
+-- tidak menyentuh kamera sama sekali. Bagian yang menyentuh kamera/Lighting
+-- (applyFpsBoost) tetap menunggu sampai [4/5] di bawah.
+status(string.format("Aktif (#%d) — [1/5] menunggu dunia siap (kebun dibersihkan paralel)...", instanceSaya))
+if Config.FpsBoost then
+    task.spawn(function() pcall(bersihkanAwal) end)
+end
 tungguGameSiap()
 
 -- Jeda tetap tambahan SETELAH readiness lolos -- lihat catatan panjang di
@@ -1331,10 +1368,12 @@ if Config.AntiAFK then
     pasangAntiAFK()
 end
 
--- 4. FPS BOOST -- sapuan berat, cukup SEKALI di sini saat startup. Kebun
--- orang lain dimuat bertahap, jadi dibersihkan lagi secara berkala di dalam
--- siklus (lihat fase "bersih-kebun" di bawah), bukan diulang di sini.
-status(string.format("Aktif (#%d) — [4/5] FPS boost...", instanceSaya))
+-- 4. FPS BOOST (kamera/Lighting/kualitas) -- kebun & dekorasi sudah
+-- dibersihkan lebih awal secara paralel lewat bersihkanAwal() di step 1;
+-- ini cuma bagian yang WAJIB menunggu dunia+kamera benar-benar siap. Kebun
+-- orang lain yang baru dimuat sesudahnya tetap dibersihkan lagi secara
+-- berkala di dalam siklus (lihat fase "bersih-kebun" di bawah).
+status(string.format("Aktif (#%d) — [4/5] FPS boost (kamera/Lighting)...", instanceSaya))
 pcall(applyFpsBoost)
 
 -- 5. HANCUR PETA JAUH DARI NPC -- opt-in, MATI kalau Config.HancurkanPeta
