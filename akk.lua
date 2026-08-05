@@ -132,13 +132,41 @@ local Config = {
     -- di dalam radius aman pada saat penghancuran terjadi, bukan tergantung
     -- kebetulan sudah dekat NPC atau belum.
     --
-    -- SATU RISIKO YANG BELUM BISA DIHILANGKAN: kalau lantai sebenarnya
-    -- Terrain (voxel), bukan Part biasa, sapuan ini TIDAK menghapusnya sama
-    -- sekali -- Terrain sengaja dilewati (Terrain:Clear() terlalu berisiko,
-    -- bisa ikut menghapus lantai di BAWAH ketiga NPC juga, jadi tidak
-    -- dipakai di sini). Set cfg.HancurkanPeta = false untuk mematikan ini.
+    -- Kalau lantai sebenarnya Terrain (voxel), bukan Part biasa, sapuan ini
+    -- SENDIRI tidak menghapusnya -- lihat Config.HancurkanTerrain di bawah
+    -- untuk itu, fitur TERPISAH karena caranya dan risikonya beda jauh.
+    -- Set cfg.HancurkanPeta = false untuk mematikan ini.
     HancurkanPeta   = cfg.HancurkanPeta ~= false,
     RadiusAmanPeta  = tonumber(cfg.RadiusAmanPeta) or 20,
+
+    -- ==========================================================
+    -- HANCUR TERRAIN JAUH DARI NPC -- OPT-IN, MATI SECARA DEFAULT.
+    -- ==========================================================
+    -- Melengkapi HancurkanPeta di atas: itu cuma menghapus BasePart biasa,
+    -- SENGAJA melewati Terrain (voxel) karena Terrain:Clear() penuh
+    -- menghapus SEMUANYA sekaligus, termasuk lantai di BAWAH ketiga NPC.
+    -- Fitur ini mengganti pendekatannya: alih-alih hapus-semua-lalu-isi-
+    -- ulang (butuh tahu bentuk asli terrain yang tidak kita punya datanya),
+    -- petanya dipecah jadi GRID sel kotak (UkuranSelTerrain studs per sisi),
+    -- lalu tiap sel yang JAUH dari ketiga NPC (di luar RadiusAmanPeta,
+    -- radius yang SAMA dipakai HancurkanPeta) dibersihkan satu-satu lewat
+    -- Terrain:FillRegion(..., Air) -- sel yang dekat NPC tidak PERNAH
+    -- disentuh sama sekali, jadi tidak perlu direkonstruksi.
+    --
+    -- RISIKO YANG BELUM BISA DIHILANGKAN, WAJIB DIUJI DI SATU AKUN DULU:
+    --  1. LuarPetaTerrain/TinggiTerrainAtas/TinggiTerrainBawah di bawah
+    --     cuma PERKIRAAN ukuran peta -- kalau peta Fall Harvest ternyata
+    --     lebih besar dari itu, bagian terrain di luar batas ini TIDAK ikut
+    --     dibersihkan (gagal aman: tersisa, bukan malah salah dihapus).
+    --  2. Operasi Terrain jauh lebih berat per panggilan dibanding
+    --     menghapus BasePart -- dengan sel kecil/area luas, ini bisa makan
+    --     waktu cukup lama saat startup (dijeda tiap beberapa sel supaya
+    --     tidak macet total, tapi tetap lebih lambat dari HancurkanPeta).
+    HancurkanTerrain     = cfg.HancurkanTerrain == true,
+    LuarPetaTerrain      = tonumber(cfg.LuarPetaTerrain) or 500,
+    TinggiTerrainAtas    = tonumber(cfg.TinggiTerrainAtas) or 150,
+    TinggiTerrainBawah   = tonumber(cfg.TinggiTerrainBawah) or 150,
+    UkuranSelTerrain     = tonumber(cfg.UkuranSelTerrain) or 40,
 
     -- Menunggu dunia siap TIDAK bisa dimatikan lewat config -- disengaja.
     -- Script ini dipakai tanpa pengawasan di cloud phone, jadi tidak boleh ada
@@ -1266,6 +1294,86 @@ local function hancurkanPetaJauh()
 end
 
 -- ==========================================================
+-- HANCUR TERRAIN JAUH DARI NPC (opt-in, lihat Config.HancurkanTerrain)
+-- ==========================================================
+-- Sel yang dekat NPC (dalam RadiusAmanPeta, dicek horizontal X/Z saja --
+-- bukan jarak 3D penuh, karena tinggi terrain bisa berbeda-beda sementara
+-- yang penting dilindungi adalah KOLOM di sekitar posisi NPC) TIDAK PERNAH
+-- disentuh sama sekali -- jadi tidak perlu direkonstruksi setelahnya.
+local function hancurkanTerrainJauh()
+    if not Config.HancurkanTerrain then return 0 end
+
+    local posSeed = posisiNPC("seed")
+    local posGear = posisiNPC("gear")
+    local posJual = posisiNPC("jual")
+    if not (posSeed and posGear and posJual) then
+        status("[TERRAIN] Belum semua NPC (seed/gear/jual) ketemu — dilewati demi keamanan")
+        return 0
+    end
+
+    -- Sama seperti hancurkanPetaJauh(): WAJIB sudah di dekat NPC dulu
+    -- sebelum terrain mana pun dibersihkan, supaya posisi karakter sendiri
+    -- sudah pasti aman saat pembersihan terjadi.
+    if not pergiKe(posSeed, Config.JarakAman) then
+        status("[TERRAIN] Gagal mencapai NPC dulu — pembersihan DIBATALKAN demi keamanan")
+        return 0
+    end
+
+    local tengah = (posSeed + posGear + posJual) / 3
+    local terrain = workspace.Terrain
+
+    -- Ukuran sel dipaksa kelipatan 4 studs -- voxel Terrain berukuran 4 studs,
+    -- dan FillRegion perlu region yang selaras dengan itu.
+    local sel = math.max(4, math.floor(Config.UkuranSelTerrain / 4) * 4)
+    local luar = Config.LuarPetaTerrain
+    local atas = Config.TinggiTerrainAtas
+    local bawah = Config.TinggiTerrainBawah
+
+    local dibersihkan, diperiksa = 0, 0
+    local x = -luar
+    while x < luar do
+        local z = -luar
+        while z < luar do
+            local pusatX, pusatZ = tengah.X + x + sel / 2, tengah.Z + z + sel / 2
+
+            local dekatNPC = false
+            for _, posNpc in ipairs({ posSeed, posGear, posJual }) do
+                local jarakDatar = (Vector2.new(pusatX, pusatZ) - Vector2.new(posNpc.X, posNpc.Z)).Magnitude
+                if jarakDatar <= Config.RadiusAmanPeta then
+                    dekatNPC = true
+                    break
+                end
+            end
+
+            if not dekatNPC then
+                local ok = pcall(function()
+                    local region = Region3.new(
+                        Vector3.new(tengah.X + x, tengah.Y - bawah, tengah.Z + z),
+                        Vector3.new(tengah.X + x + sel, tengah.Y + atas, tengah.Z + z + sel)
+                    ):ExpandToGrid(4)
+                    terrain:FillRegion(region, 4, Enum.Material.Air)
+                end)
+                if ok then dibersihkan = dibersihkan + 1 end
+            end
+
+            diperiksa = diperiksa + 1
+            -- Operasi Terrain jauh lebih berat per panggilan dibanding hapus
+            -- BasePart biasa -- dijeda tiap beberapa sel, bukan tiap sel,
+            -- supaya tidak macet total tapi juga tidak terlalu lambat.
+            if diperiksa % 10 == 0 then task.wait() end
+
+            z = z + sel
+        end
+        x = x + sel
+    end
+
+    status(string.format(
+        "[TERRAIN] %d/%d sel terrain (%dx%d studs) di luar radius %d studs dari NPC dibersihkan",
+        dibersihkan, diperiksa, sel, sel, Config.RadiusAmanPeta))
+    return dibersihkan
+end
+
+-- ==========================================================
 -- AKSI: BELI & JUAL
 -- ==========================================================
 -- Dipakai bersama oleh beli seed dan beli gear -- satu-satunya beda adalah
@@ -1410,27 +1518,27 @@ local instanceSaya = _G.FHInstance
 -- memicu pindah server, cekDanPindahServerRamai() TIDAK PERNAH balik ke sini
 -- (menunggu selamanya sampai benar-benar keluar) -- baris-baris di bawahnya
 -- cuma jalan kalau ternyata TIDAK jadi pindah.
-status(string.format("Aktif (#%d) — [1/6] cek jumlah pemain server...", instanceSaya))
+status(string.format("Aktif (#%d) — [1/7] cek jumlah pemain server...", instanceSaya))
 cekDanPindahServerRamai()
 
 -- 2. TUNGGU DUNIA SIAP -- kebun & dekorasi orang lain mulai dibersihkan
 -- SECARA PARALEL di sini (bersihkanAwal, task.spawn terpisah), bukan
 -- menunggu wait ini selesai dulu -- itu bagian yang aman dari FPS boost,
 -- tidak menyentuh kamera sama sekali. Bagian yang menyentuh kamera/Lighting
--- (applyFpsBoost) tetap menunggu sampai [5/6] di bawah.
-status(string.format("Aktif (#%d) — [2/6] menunggu dunia siap (kebun dibersihkan paralel)...", instanceSaya))
+-- (applyFpsBoost) tetap menunggu sampai [5/7] di bawah.
+status(string.format("Aktif (#%d) — [2/7] menunggu dunia siap (kebun dibersihkan paralel)...", instanceSaya))
 if Config.FpsBoost then
     task.spawn(function() pcall(bersihkanAwal) end)
 end
 tungguGameSiap()
 
 -- 3. BLACK SCREEN
-status(string.format("Aktif (#%d) — [3/6] memasang black screen...", instanceSaya))
+status(string.format("Aktif (#%d) — [3/7] memasang black screen...", instanceSaya))
 pasangBlackScreen()
 
 -- 4. ANTI-AFK
 if Config.AntiAFK then
-    status(string.format("Aktif (#%d) — [4/6] memasang anti-AFK...", instanceSaya))
+    status(string.format("Aktif (#%d) — [4/7] memasang anti-AFK...", instanceSaya))
     pasangAntiAFK()
 end
 
@@ -1439,17 +1547,27 @@ end
 -- ini cuma bagian yang WAJIB menunggu dunia+kamera benar-benar siap. Kebun
 -- orang lain yang baru dimuat sesudahnya tetap dibersihkan lagi secara
 -- berkala di dalam siklus (lihat fase "bersih-kebun" di bawah).
-status(string.format("Aktif (#%d) — [5/6] FPS boost (kamera/Lighting)...", instanceSaya))
+status(string.format("Aktif (#%d) — [5/7] FPS boost (kamera/Lighting)...", instanceSaya))
 pcall(applyFpsBoost)
 
--- 6. HANCUR PETA JAUH DARI NPC -- AKTIF SECARA DEFAULT. Set
+-- 6. HANCUR PETA JAUH DARI NPC (BasePart) -- AKTIF SECARA DEFAULT. Set
 -- cfg.HancurkanPeta = false di config untuk mematikannya. Lihat catatan
 -- risiko panjang di Config.HancurkanPeta.
 if Config.HancurkanPeta then
     status(string.format(
-        "Aktif (#%d) — [6/6] Config.HancurkanPeta AKTIF: menghancurkan peta di luar radius %d studs dari NPC...",
+        "Aktif (#%d) — [6/7] Config.HancurkanPeta AKTIF: menghancurkan peta di luar radius %d studs dari NPC...",
         instanceSaya, Config.RadiusAmanPeta))
     pcall(hancurkanPetaJauh)
+end
+
+-- 7. HANCUR TERRAIN JAUH DARI NPC -- opt-in, MATI kalau Config.HancurkanTerrain
+-- tidak disetel true. Fitur lebih baru & lebih berisiko -- WAJIB diuji di
+-- satu akun dulu. Lihat catatan risiko panjang di Config.HancurkanTerrain.
+if Config.HancurkanTerrain then
+    status(string.format(
+        "Aktif (#%d) — [7/7] Config.HancurkanTerrain AKTIF: membersihkan terrain di luar radius %d studs dari NPC...",
+        instanceSaya, Config.RadiusAmanPeta))
+    pcall(hancurkanTerrainJauh)
 end
 
 status(string.format("Aktif (#%d) — mode ringkas: beli + jual", instanceSaya))
