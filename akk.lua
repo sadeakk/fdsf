@@ -118,13 +118,13 @@ local Config = {
     Noclip        = cfg.Noclip ~= false,
 
     -- ==========================================================
-    -- HANCUR PETA JAUH DARI NPC -- OPT-IN, MATI SECARA DEFAULT.
+    -- HANCUR PETA JAUH DARI NPC -- AKTIF SECARA DEFAULT.
     -- ==========================================================
-    -- Kalau dinyalakan: SEMUA BasePart di luar radius dari Sam/George/Steven
-    -- dihancurkan permanen -- termasuk SELURUH kebun, milik sendiri maupun
-    -- orang lain, tanpa pengecualian. Perlindungannya murni JARAK, bukan nama
-    -- part, karena struktur asli lantai/map Fall Harvest belum terverifikasi
-    -- dari klien asli -- ini caranya menghindari perlu menebak nama part.
+    -- SEMUA BasePart di luar radius dari Sam/George/Steven dihancurkan
+    -- permanen -- termasuk SELURUH kebun, milik sendiri maupun orang lain,
+    -- tanpa pengecualian. Perlindungannya murni JARAK, bukan nama part,
+    -- karena struktur asli lantai/map Fall Harvest belum terverifikasi dari
+    -- klien asli -- ini caranya menghindari perlu menebak nama part.
     --
     -- Karakter DIPAKSA terbang ke Sam dulu (dan penghancuran DIBATALKAN kalau
     -- gagal sampai) sebelum lantai mana pun dihancurkan -- lihat
@@ -132,12 +132,12 @@ local Config = {
     -- di dalam radius aman pada saat penghancuran terjadi, bukan tergantung
     -- kebetulan sudah dekat NPC atau belum.
     --
-    -- SATU RISIKO YANG BELUM BISA DIHILANGKAN, WAJIB DIUJI DI SATU AKUN DULU:
-    -- kalau lantai sebenarnya Terrain (voxel), bukan Part biasa, sapuan ini
-    -- TIDAK menghapusnya sama sekali -- Terrain sengaja dilewati
-    -- (Terrain:Clear() terlalu berisiko, bisa ikut menghapus lantai di BAWAH
-    -- ketiga NPC juga, jadi tidak dipakai di sini).
-    HancurkanPeta   = cfg.HancurkanPeta == true,
+    -- SATU RISIKO YANG BELUM BISA DIHILANGKAN: kalau lantai sebenarnya
+    -- Terrain (voxel), bukan Part biasa, sapuan ini TIDAK menghapusnya sama
+    -- sekali -- Terrain sengaja dilewati (Terrain:Clear() terlalu berisiko,
+    -- bisa ikut menghapus lantai di BAWAH ketiga NPC juga, jadi tidak
+    -- dipakai di sini). Set cfg.HancurkanPeta = false untuk mematikan ini.
+    HancurkanPeta   = cfg.HancurkanPeta ~= false,
     RadiusAmanPeta  = tonumber(cfg.RadiusAmanPeta) or 50,
 
     -- Menunggu dunia siap TIDAK bisa dimatikan lewat config -- disengaja.
@@ -1178,7 +1178,7 @@ local function pulangKeParkir()
 end
 
 -- ==========================================================
--- HANCUR PETA JAUH DARI NPC (opt-in, lihat Config.HancurkanPeta di atas)
+-- HANCUR PETA JAUH DARI NPC (aktif default, lihat Config.HancurkanPeta di atas)
 -- ==========================================================
 -- Sengaja TERPISAH dari bolehDibrutalkan()/plotSaya(): fungsi-fungsi itu
 -- SENGAJA melindungi kebun sendiri, sedangkan sapuan ini SENGAJA tidak --
@@ -1442,9 +1442,9 @@ end
 status(string.format("Aktif (#%d) — [5/6] FPS boost (kamera/Lighting)...", instanceSaya))
 pcall(applyFpsBoost)
 
--- 6. HANCUR PETA JAUH DARI NPC -- opt-in, MATI kalau Config.HancurkanPeta
--- tidak disetel true. Lihat catatan risiko panjang di Config.HancurkanPeta
--- sebelum menyalakan ini pada semua akun sekaligus.
+-- 6. HANCUR PETA JAUH DARI NPC -- AKTIF SECARA DEFAULT. Set
+-- cfg.HancurkanPeta = false di config untuk mematikannya. Lihat catatan
+-- risiko panjang di Config.HancurkanPeta.
 if Config.HancurkanPeta then
     status(string.format(
         "Aktif (#%d) — [6/6] Config.HancurkanPeta AKTIF: menghancurkan peta di luar radius %d studs dari NPC...",
