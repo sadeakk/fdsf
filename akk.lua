@@ -148,15 +148,6 @@ local Config = {
     MaksTungguSiap  = tonumber(cfg.MaksTungguSiap) or 60,
     JedaKlikSiap    = tonumber(cfg.JedaKlikSiap) or 1.5,
 
-    -- Jeda TETAP tambahan SETELAH duniaSudahSiap() terdeteksi true, sebelum
-    -- lanjut ke black screen/FPS boost/dst. Ditambahkan karena kamera masih
-    -- bisa macet seperti layar loading walau semua pemeriksaan readiness
-    -- (HRP, Humanoid, leaderstats Leaves, Gardens, NPCS, CameraType Custom)
-    -- sudah lolos -- animasi intro/home Fall Harvest sepertinya kadang belum
-    -- BENAR-BENAR selesai walau kamera sudah balik ke Custom lebih dulu.
-    -- Default 60 detik. Boleh diset 0 untuk mematikan jeda ini sama sekali.
-    JedaSetelahSiap = tonumber(cfg.JedaSetelahSiap) or 60,
-
     -- ==========================================================
     -- PINDAH SERVER KALAU RAMAI
     -- ==========================================================
@@ -950,9 +941,9 @@ end
 
 -- Bagian FPS boost yang TIDAK menyentuh kamera/Lighting sama sekali --
 -- hanya kebun dan dekorasi di workspace. Aman dijalankan SECARA PARALEL
--- dengan tungguGameSiap()/Config.JedaSetelahSiap (lihat URUTAN STARTUP),
--- supaya kebun orang lain sudah mulai dibersihkan sementara wait yang
--- lain masih berjalan -- bukan menunggu wait itu selesai dulu baru mulai.
+-- dengan tungguGameSiap() (lihat URUTAN STARTUP), supaya kebun orang lain
+-- sudah mulai dibersihkan sementara wait itu masih berjalan -- bukan
+-- menunggu wait itu selesai dulu baru mulai.
 --
 -- SENGAJA dipisah dari applyFpsBoost(): FieldOfView/Lighting.Technology
 -- DI SANA wajib menunggu dunia+kamera benar-benar siap (lihat catatan
@@ -1009,8 +1000,8 @@ end
 
 -- Bagian FPS boost yang MENYENTUH kamera/Lighting -- tetap wajib menunggu
 -- dunia+kamera benar-benar siap (lihat duniaSudahSiap), jadi tetap
--- dipanggil SETELAH tungguGameSiap()/JedaSetelahSiap selesai, bukan
--- diparalelkan seperti bersihkanAwal() di atas.
+-- dipanggil SETELAH tungguGameSiap() selesai, bukan diparalelkan seperti
+-- bersihkanAwal() di atas.
 local function applyFpsBoost()
     if not Config.FpsBoost then return end
     status("[FPS] Menyesuaikan lighting/kamera/kualitas...")
@@ -1432,16 +1423,6 @@ if Config.FpsBoost then
     task.spawn(function() pcall(bersihkanAwal) end)
 end
 tungguGameSiap()
-
--- Jeda tetap tambahan SETELAH readiness lolos -- lihat catatan panjang di
--- Config.JedaSetelahSiap. Ditaruh sebelum black screen/FPS boost supaya
--- tidak ada apa pun (termasuk FieldOfView di applyFpsBoost) menyentuh kamera
--- selagi animasi intro/home kemungkinan masih benar-benar berjalan.
-if Config.JedaSetelahSiap > 0 then
-    status(string.format("Aktif (#%d) — jeda tambahan %ds sebelum lanjut...",
-        instanceSaya, Config.JedaSetelahSiap))
-    task.wait(Config.JedaSetelahSiap)
-end
 
 -- 3. BLACK SCREEN
 status(string.format("Aktif (#%d) — [3/6] memasang black screen...", instanceSaya))
