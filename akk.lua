@@ -138,7 +138,7 @@ local Config = {
     -- bisa ikut menghapus lantai di BAWAH ketiga NPC juga, jadi tidak
     -- dipakai di sini). Set cfg.HancurkanPeta = false untuk mematikan ini.
     HancurkanPeta   = cfg.HancurkanPeta ~= false,
-    RadiusAmanPeta  = tonumber(cfg.RadiusAmanPeta) or 50,
+    RadiusAmanPeta  = tonumber(cfg.RadiusAmanPeta) or 20,
 
     -- Menunggu dunia siap TIDAK bisa dimatikan lewat config -- disengaja.
     -- Script ini dipakai tanpa pengawasan di cloud phone, jadi tidak boleh ada
