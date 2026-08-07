@@ -1725,21 +1725,40 @@ task.spawn(function()
 
             if Config.AutoBeli then
                 fase[#fase + 1] = { "beli", function()
-                    local mentah = stokShop()
-                    rakStok.seedN = #mentah
-                    rakStok.seedRestock = detikKeRestock("SeedShop") or 0
-                    local stok = saringWhitelist(mentah, Config.SeedWhitelist)
-                    if #stok > 0 then beli(stok) end
+                    -- Habiskan SELURUH stok yang terjangkau di Sam dulu --
+                    -- ulangi membeli (baca ulang rak tiap putaran, karena
+                    -- StockValues berkurang nyata tiap pembelian) sampai satu
+                    -- putaran penuh tidak membeli apa pun sama sekali, BARU
+                    -- pindah ke fase gear. Tanpa ini, karakter bolak-balik
+                    -- Sam<->George tiap siklus (~5 detik) walau stok kedua
+                    -- toko belum berubah sejak kunjungan sebelumnya.
+                    -- Batas 50 putaran murni jaring pengaman kalau suatu saat
+                    -- stok item ternyata sangat dalam -- bukan diharapkan
+                    -- tercapai dalam pemakaian normal.
+                    for _ = 1, 50 do
+                        local mentah = stokShop()
+                        rakStok.seedN = #mentah
+                        rakStok.seedRestock = detikKeRestock("SeedShop") or 0
+                        local stok = saringWhitelist(mentah, Config.SeedWhitelist)
+                        if #stok == 0 then break end
+                        if beli(stok) == 0 then break end
+                    end
                 end }
             end
 
             if Config.AutoBeliGear then
                 fase[#fase + 1] = { "beli-gear", function()
-                    local mentah = stokGear()
-                    rakStok.gearN = #mentah
-                    rakStok.gearRestock = detikKeRestock("GearShop") or 0
-                    local stok = saringWhitelist(mentah, Config.GearWhitelist)
-                    if #stok > 0 then beliGear(stok) end
+                    -- Sama seperti fase "beli" di atas -- habiskan George
+                    -- dulu sebelum kembali parkir, bukan satu putaran lalu
+                    -- langsung pindah.
+                    for _ = 1, 50 do
+                        local mentah = stokGear()
+                        rakStok.gearN = #mentah
+                        rakStok.gearRestock = detikKeRestock("GearShop") or 0
+                        local stok = saringWhitelist(mentah, Config.GearWhitelist)
+                        if #stok == 0 then break end
+                        if beliGear(stok) == 0 then break end
+                    end
                 end }
             end
 
