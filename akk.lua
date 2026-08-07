@@ -113,7 +113,23 @@ local Config = {
     JedaAksi      = tonumber(cfgMain.Delay) or tonumber(cfg.JedaAksi) or 0.35,
 
     JarakAman     = tonumber(cfg.JarakAman) or 12,
-    MaxBeliPerSiklus = tonumber(cfg.MaxBeliPerSiklus) or 20,
+
+    -- Batas beli PER ITEM dalam satu kunjungan NPC -- dulu satu-satunya batas
+    -- (MaxBeliPerSiklus) dipakai bersama untuk "per item" MAUPUN "total
+    -- seluruh rak", dan itu ternyata salah asumsi: kode ini awalnya mengira
+    -- item akan hilang dari rak begitu stoknya habis (lihat masihAda di
+    -- beliDari), padahal di game ini item TIDAK PERNAH hilang dari rak
+    -- semata karena sudah dibeli berkali-kali -- jadi item TERMURAH (rak
+    -- diurutkan termurah dulu) menghabiskan SELURUH batas sendirian sebelum
+    -- loop sempat pindah ke item kedua sama sekali. Sekarang tiap item
+    -- dibatasi sendiri-sendiri lewat MaxBeliPerItem, baru lanjut ke item
+    -- berikutnya di rak yang sama.
+    MaxBeliPerItem = tonumber(cfg.MaxBeliPerItem) or 20,
+    -- Batas TOTAL seluruh rak per kunjungan NPC -- jaring pengaman terakhir
+    -- supaya satu kunjungan tidak menembak ratusan kali tanpa henti kalau
+    -- raknya penuh item murah. Dinaikkan dari default lama (20) karena
+    -- sekarang benar-benar mewakili SELURUH rak, bukan satu item saja.
+    MaxBeliPerSiklus = tonumber(cfg.MaxBeliPerSiklus) or 200,
 
     -- studs/detik. Versi pertama memakai BodyPosition yang menarik dengan gaya
     -- besar, jadi karakter melesat ke tujuan -- terlihat jelas tidak wajar.
@@ -1455,10 +1471,13 @@ local function beliDari(daftar, peran, tembak, labelNPC, namaGuiShop, tasHitung)
     for _, s in ipairs(daftar) do
         if dibeli >= Config.MaxBeliPerSiklus then break end
 
-        -- Habiskan item INI dulu -- tembak berulang sampai stoknya hilang dari
-        -- rak atau Leaves tidak cukup lagi -- baru pindah ke item berikutnya.
-        -- Sebelumnya cuma satu tembakan per item lalu langsung lompat ke seed
-        -- lain, jadi tiap jenis cuma kebagian 1 biji walau stoknya masih ada.
+        -- Tembak item INI berulang sampai kena MaxBeliPerItem, Leaves tidak
+        -- cukup lagi, atau (kalau memang bisa terjadi di game ini) stoknya
+        -- hilang dari rak -- baru pindah ke item berikutnya. TIDAK bergantung
+        -- HANYA pada stok habis: item di sini terbukti bisa dibeli berkali-
+        -- kali tanpa pernah hilang dari rak, jadi MaxBeliPerItem-lah yang
+        -- menjamin loop ini akhirnya pindah ke item lain, bukan cuma
+        -- berharap stoknya suatu saat habis sendiri.
         local harga = s.harga
         local dibeliItemIni = 0
         -- Jaring pengaman: kalau tembakan terus gagal (error remote sesaat)
@@ -1467,7 +1486,7 @@ local function beliDari(daftar, peran, tembak, labelNPC, namaGuiShop, tasHitung)
         -- berhenti alih-alih menembak sia-sia selamanya.
         local gagalBerturut = 0
 
-        while dibeli < Config.MaxBeliPerSiklus do
+        while dibeli < Config.MaxBeliPerSiklus and dibeliItemIni < Config.MaxBeliPerItem do
             -- Jarak diperiksa ulang tiap tembakan: karakter bisa terdorong
             -- menjauh di tengah pembelian, dan satu fire dari jauh sudah
             -- cukup untuk ditandai.
