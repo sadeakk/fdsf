@@ -47,8 +47,12 @@ local Config = {
     -- Master switch. Dua sumber sengaja digabung: cfgFH (ABASUWFallHarvestConfig)
     -- untuk toggle khusus script ini, cfgMain (ABASUWAutoBuyConfig) untuk format
     -- config yang sudah dipakai panel/loader lain (BuySeeds/BuyGears/Seeds/Gears).
+    -- Keduanya ON secara default TANPA config sama sekali (getgenv() kosong) --
+    -- loadstring polos sudah langsung auto-beli seed DAN gear. Set salah
+    -- satunya eksplisit `false` (cfg.AutoBeliGear/cfgMain.BuyGears, dst.) kalau
+    -- mau mematikannya.
     AutoBeli      = (cfg.AutoBeli ~= false) and (cfgMain.BuySeeds ~= false),
-    AutoBeliGear  = (cfg.AutoBeliGear == true) or (cfgMain.BuyGears == true),
+    AutoBeliGear  = (cfg.AutoBeliGear ~= false) and (cfgMain.BuyGears ~= false),
     AutoJual      = cfg.AutoJual ~= false,
     -- Daily Deal diklaim SEBELUM SellAll -- lihat jual(). Buah yang termasuk
     -- daily deal dapat bonus lewat jalur ini; kalau SellAll jalan duluan,
