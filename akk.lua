@@ -114,22 +114,35 @@ local Config = {
 
     JarakAman     = tonumber(cfg.JarakAman) or 12,
 
-    -- Batas beli PER ITEM dalam satu kunjungan NPC -- dulu satu-satunya batas
-    -- (MaxBeliPerSiklus) dipakai bersama untuk "per item" MAUPUN "total
-    -- seluruh rak", dan itu ternyata salah asumsi: kode ini awalnya mengira
-    -- item akan hilang dari rak begitu stoknya habis (lihat masihAda di
-    -- beliDari), padahal di game ini item TIDAK PERNAH hilang dari rak
-    -- semata karena sudah dibeli berkali-kali -- jadi item TERMURAH (rak
-    -- diurutkan termurah dulu) menghabiskan SELURUH batas sendirian sebelum
-    -- loop sempat pindah ke item kedua sama sekali. Sekarang tiap item
-    -- dibatasi sendiri-sendiri lewat MaxBeliPerItem, baru lanjut ke item
-    -- berikutnya di rak yang sama.
-    MaxBeliPerItem = tonumber(cfg.MaxBeliPerItem) or 20,
-    -- Batas TOTAL seluruh rak per kunjungan NPC -- jaring pengaman terakhir
-    -- supaya satu kunjungan tidak menembak ratusan kali tanpa henti kalau
-    -- raknya penuh item murah. Dinaikkan dari default lama (20) karena
-    -- sekarang benar-benar mewakili SELURUH rak, bukan satu item saja.
-    MaxBeliPerSiklus = tonumber(cfg.MaxBeliPerSiklus) or 200,
+    -- Batas beli PER ITEM dalam satu kunjungan NPC. TAK TERBATAS secara
+    -- default (0/tidak diisi) -- sesuai permintaan: beli terus item yang
+    -- sama sampai raknya benar-benar menunjukkan "NO STOCK" (lihat masihAda
+    -- di beliDari), bukan berhenti di angka sembarang. Dulu satu-satunya
+    -- batas (MaxBeliPerSiklus) dipakai bersama untuk "per item" MAUPUN
+    -- "total seluruh rak", dan item TERMURAH (rak diurutkan termurah dulu)
+    -- selalu menghabiskan seluruh batas sendirian sebelum loop sempat
+    -- pindah ke item kedua -- sekarang dipisah, dan keduanya tak terbatas
+    -- kecuali diisi angka > 0.
+    --
+    -- RISIKO: kalau ada item yang TAMPIL di rak dengan harga (lolos
+    -- bacaStokUI) tapi remote pembeliannya DITOLAK DIAM-DIAM oleh server
+    -- tanpa error (lihat catatan SeedBlacklist/GearBlacklist di atas --
+    -- kasus nyata: "Big Black Dragon"), stoknya di UI tidak akan PERNAH
+    -- berkurang/hilang, dan tanpa batas sama sekali loop bisa menembaknya
+    -- selamanya. Item semacam itu WAJIB dimasukkan ke SeedBlacklist/
+    -- GearBlacklist, bukan diandalkan ke batas angka ini.
+    MaxBeliPerItem = (function()
+        local v = tonumber(cfg.MaxBeliPerItem)
+        if not v or v <= 0 then return math.huge end
+        return v
+    end)(),
+    -- Batas TOTAL seluruh rak per kunjungan NPC -- sama-sama tak terbatas
+    -- secara default, dengan risiko yang sama seperti di atas.
+    MaxBeliPerSiklus = (function()
+        local v = tonumber(cfg.MaxBeliPerSiklus)
+        if not v or v <= 0 then return math.huge end
+        return v
+    end)(),
 
     -- studs/detik. Versi pertama memakai BodyPosition yang menarik dengan gaya
     -- besar, jadi karakter melesat ke tujuan -- terlihat jelas tidak wajar.
