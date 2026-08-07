@@ -118,30 +118,19 @@ local Config = {
 
     JarakAman     = tonumber(cfg.JarakAman) or 12,
 
-    -- Batas beli PER ITEM dalam satu kunjungan NPC. TAK TERBATAS secara
-    -- default (0/tidak diisi) -- sesuai permintaan: beli terus item yang
-    -- sama sampai raknya benar-benar menunjukkan "NO STOCK" (lihat masihAda
-    -- di beliDari), bukan berhenti di angka sembarang. Dulu satu-satunya
-    -- batas (MaxBeliPerSiklus) dipakai bersama untuk "per item" MAUPUN
-    -- "total seluruh rak", dan item TERMURAH (rak diurutkan termurah dulu)
-    -- selalu menghabiskan seluruh batas sendirian sebelum loop sempat
-    -- pindah ke item kedua -- sekarang dipisah, dan keduanya tak terbatas
-    -- kecuali diisi angka > 0.
+    -- beliDari() membeli SATU unit dari SETIAP item yang terjangkau per
+    -- kunjungan NPC, bukan memborong satu item sampai stok/Leaves habis
+    -- sebelum pindah ke item berikutnya -- versi lama begitu, dan akibatnya
+    -- item TERMURAH (rak diurutkan termurah dulu, mis. Maple Bamboo) selalu
+    -- menghabiskan seluruh Leaves sendirian sebelum loop sempat mencoba
+    -- item kedua sama sekali. Beli lebih banyak dari item yang sama didapat
+    -- lewat SIKLUS BERIKUTNYA (Config.JedaSiklus), bukan lewat mengulang
+    -- dalam satu kunjungan -- pola ini disalin dari implementasi yang
+    -- terbukti dipakai (lihat riwayat git untuk sumbernya).
     --
-    -- RISIKO: kalau ada item yang TAMPIL di rak dengan harga (lolos
-    -- bacaStokUI) tapi remote pembeliannya DITOLAK DIAM-DIAM oleh server
-    -- tanpa error (lihat catatan SeedBlacklist/GearBlacklist di atas --
-    -- kasus nyata: "Big Black Dragon"), stoknya di UI tidak akan PERNAH
-    -- berkurang/hilang, dan tanpa batas sama sekali loop bisa menembaknya
-    -- selamanya. Item semacam itu WAJIB dimasukkan ke SeedBlacklist/
-    -- GearBlacklist, bukan diandalkan ke batas angka ini.
-    MaxBeliPerItem = (function()
-        local v = tonumber(cfg.MaxBeliPerItem)
-        if not v or v <= 0 then return math.huge end
-        return v
-    end)(),
-    -- Batas TOTAL seluruh rak per kunjungan NPC -- sama-sama tak terbatas
-    -- secara default, dengan risiko yang sama seperti di atas.
+    -- MaxBeliPerSiklus di sini jadi batas berapa BANYAK JENIS item berbeda
+    -- yang boleh dibeli dalam satu kunjungan (tiap item cuma sekali per
+    -- kunjungan) -- TAK TERBATAS secara default (0/tidak diisi).
     MaxBeliPerSiklus = (function()
         local v = tonumber(cfg.MaxBeliPerSiklus)
         if not v or v <= 0 then return math.huge end
@@ -1464,8 +1453,9 @@ end
 -- AKSI: BELI & JUAL
 -- ==========================================================
 -- Dipakai bersama oleh beli seed dan beli gear -- satu-satunya beda adalah
--- peran NPC yang didekati, remote yang ditembak, dan nama GUI shop-nya.
-local function beliDari(daftar, peran, tembak, labelNPC, namaGuiShop, tasHitung)
+-- peran NPC yang didekati, remote yang ditembak, dan tabel Bag Stock mana
+-- yang dihitung.
+local function beliDari(daftar, peran, tembak, labelNPC, tasHitung)
     -- BEDA dengan jual: membeli WAJIB dari dekat.
     --
     -- Secara teknis PurchaseSeed/PurchaseGear tetap diterima dari jarak jauh,
@@ -1488,69 +1478,48 @@ local function beliDari(daftar, peran, tembak, labelNPC, namaGuiShop, tasHitung)
     for _, s in ipairs(daftar) do
         if dibeli >= Config.MaxBeliPerSiklus then break end
 
-        -- Tembak item INI berulang sampai kena MaxBeliPerItem, Leaves tidak
-        -- cukup lagi, atau (kalau memang bisa terjadi di game ini) stoknya
-        -- hilang dari rak -- baru pindah ke item berikutnya. TIDAK bergantung
-        -- HANYA pada stok habis: item di sini terbukti bisa dibeli berkali-
-        -- kali tanpa pernah hilang dari rak, jadi MaxBeliPerItem-lah yang
-        -- menjamin loop ini akhirnya pindah ke item lain, bukan cuma
-        -- berharap stoknya suatu saat habis sendiri.
-        local harga = s.harga
-        local dibeliItemIni = 0
-        -- Jaring pengaman: kalau tembakan terus gagal (error remote sesaat)
-        -- padahal stok dan Leaves masih cukup, tidak ada apa pun di atas yang
-        -- pernah menghentikan loop-nya -- ini satu-satunya yang membuatnya
-        -- berhenti alih-alih menembak sia-sia selamanya.
-        local gagalBerturut = 0
-
-        while dibeli < Config.MaxBeliPerSiklus and dibeliItemIni < Config.MaxBeliPerItem do
-            -- Jarak diperiksa ulang tiap tembakan: karakter bisa terdorong
-            -- menjauh di tengah pembelian, dan satu fire dari jauh sudah
-            -- cukup untuk ditandai.
-            if jarakKe(pos) > Config.JarakAman * 2 then
-                if not pergiKe(pos) then
-                    status("[BATAL] Terlempar dari NPC, sisa pembelian dihentikan")
-                    return dibeli
-                end
+        -- Jarak diperiksa ulang tiap item: karakter bisa terdorong menjauh di
+        -- tengah belanja. Dicoba ulang 3x sebelum menyerah -- terlempar dari
+        -- NPC itu lumrah dan sesaat (cooldown teleport ~0,3 detik), jadi
+        -- menyerah di percobaan pertama membuang sisa daftar belanja hanya
+        -- karena satu tembakan meleset.
+        if jarakKe(pos) > Config.JarakAman * 2 then
+            local kembali = false
+            for _ = 1, 3 do
+                if pergiKe(pos) then kembali = true break end
+                task.wait(0.6)
             end
-            if leaves() < harga then break end
+            if not kembali then
+                status("[BATAL] Terlempar dari NPC dan gagal kembali 3x — sisa pembelian dihentikan")
+                break
+            end
+        end
 
+        -- SATU unit per item per kunjungan -- BUKAN diborong sampai stok
+        -- habis. Rak diurutkan termurah dulu; kalau item termurah dulu
+        -- dibeli berulang sampai kehabisan Leaves SEBELUM pindah ke item
+        -- berikutnya, seluruh modal keburu habis untuk satu jenis saja dan
+        -- item lain di rak tidak pernah kebagian giliran -- persis yang
+        -- terjadi sebelumnya (cuma Maple Bamboo dibeli, lalu berhenti).
+        -- Beli 1 dari SETIAP item yang terjangkau, lalu andalkan siklus
+        -- berikutnya (Config.JedaSiklus) untuk giliran berikutnya -- itu
+        -- otomatis membeli lebih banyak dari item yang memang masih
+        -- terjangkau/tersedia tiap kali rak dibaca ulang.
+        if leaves() < s.harga then
+            -- Dilewati, BUKAN berhenti: item berikutnya di rak bisa saja
+            -- lebih murah (mis. setelah disaring whitelist/blacklist, urutan
+            -- harga aslinya sudah tidak berlaku lagi).
+        else
             local ok = pcall(function() tembak(s.nama) end)
             if ok then
                 dibeli = dibeli + 1
-                dibeliItemIni = dibeliItemIni + 1
-                gagalBerturut = 0
                 -- Bag Stock (panel di pasangBlackScreen): dihitung dari sisi
                 -- pembelian, bukan scan Backpack -- lihat catatan di deklarasi
                 -- tasSeed/tasGear.
                 tasHitung[s.nama] = (tasHitung[s.nama] or 0) + 1
-            else
-                gagalBerturut = gagalBerturut + 1
-                if gagalBerturut >= 3 then
-                    status("[BATAL] " .. s.nama .. " gagal ditembak 3x berturut-turut — dilewati")
-                    break
-                end
+                status(string.format("[BELI] %s (%d Leaves, sisa %d)", s.nama, s.harga, leaves()))
             end
             task.wait(Config.JedaAksi)
-
-            -- Berhenti begitu item ini hilang dari rak (stok habis) --
-            -- dicek ulang dari UI yang sama persis dipakai stokShop()/
-            -- stokGear(), bukan ditebak dari berapa kali sudah menembak.
-            local stokTerkini = bacaStokUI(namaGuiShop)
-            local masihAda = false
-            for _, cek in ipairs(stokTerkini) do
-                if cek.nama == s.nama then
-                    masihAda = true
-                    harga = cek.harga
-                    break
-                end
-            end
-            if not masihAda then break end
-        end
-
-        if dibeliItemIni > 0 then
-            status(string.format("[BELI] %s x%d (%d Leaves, sisa %d)",
-                s.nama, dibeliItemIni, harga, leaves()))
         end
     end
     return dibeli
@@ -1559,13 +1528,13 @@ end
 local function beli(daftar)
     return beliDari(daftar, "seed",
         function(nama) Networking.SeedShop.PurchaseSeed:Fire(nama) end,
-        "penjual seed", "SeedShop", tasSeed)
+        "penjual seed", tasSeed)
 end
 
 local function beliGear(daftar)
     return beliDari(daftar, "gear",
         function(nama) Networking.GearShop.PurchaseGear:Fire(nama) end,
-        "penjual gear", "GearShop", tasGear)
+        "penjual gear", tasGear)
 end
 
 local function jual()
