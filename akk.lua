@@ -62,6 +62,17 @@ local Config = {
     SeedWhitelist = cfgMain.Seeds,
     GearWhitelist = cfgMain.Gears,
 
+    -- Daftar hitam per-nama: { ["Nama Item"] = true }. Kebalikan dari
+    -- whitelist -- item yang disebut di sini SELALU dilewati, terlepas dari
+    -- whitelist di atas. Dipakai untuk item yang TAMPIL di rak toko dengan
+    -- harga (jadi lolos bacaStokUI) tapi remote PurchaseSeed/PurchaseGear-nya
+    -- ditolak diam-diam oleh server (mis. item yang sebenarnya pet/Robux-only,
+    -- bukan item yang benar-benar bisa dibeli lewat jalur ini) -- tanpa
+    -- daftar ini, script akan terus mencoba membelinya tiap siklus selamanya
+    -- karena tidak ada cara mendeteksi penolakan diam-diam itu dari klien.
+    SeedBlacklist = cfgMain.SeedsExclude,
+    GearBlacklist = cfgMain.GearsExclude,
+
     FpsBoost      = cfg.FpsBoost ~= false,
     BlackScreen   = cfg.BlackScreen ~= false,
     AntiAFK       = cfg.AntiAFK ~= false,
@@ -1160,6 +1171,20 @@ local function saringWhitelist(daftar, whitelist)
     return hasil
 end
 
+-- Saring daftar shop TERPISAH dari whitelist -- item bernilai `true` di
+-- blacklist SELALU dibuang, apa pun kata whitelist. blacklist == nil berarti
+-- tidak ada yang dibuang. Dipanggil SETELAH saringWhitelist() di loop utama,
+-- jadi berlaku baik saat whitelist kosong (mode "beli semua") maupun saat
+-- whitelist diisi.
+local function saringBlacklist(daftar, blacklist)
+    if not blacklist then return daftar end
+    local hasil = {}
+    for _, s in ipairs(daftar) do
+        if blacklist[s.nama] ~= true then hasil[#hasil + 1] = s end
+    end
+    return hasil
+end
+
 -- Posisi NPC. Perannya dipastikan dari Script di dalam ProximityPrompt masing-
 -- masing: Sam & Gilbert membuka SeedShop, George membuka GearShop, Steven jual.
 local NPC_PERAN = { seed = { "Sam", "Gilbert" }, gear = { "George" }, jual = { "Steven" } }
@@ -1639,6 +1664,7 @@ task.spawn(function()
             if Config.AutoBeli then
                 fase[#fase + 1] = { "beli", function()
                     local stok = saringWhitelist(stokShop(), Config.SeedWhitelist)
+                    stok = saringBlacklist(stok, Config.SeedBlacklist)
                     if #stok > 0 then beli(stok) end
                 end }
             end
@@ -1646,6 +1672,7 @@ task.spawn(function()
             if Config.AutoBeliGear then
                 fase[#fase + 1] = { "beli-gear", function()
                     local stok = saringWhitelist(stokGear(), Config.GearWhitelist)
+                    stok = saringBlacklist(stok, Config.GearBlacklist)
                     if #stok > 0 then beliGear(stok) end
                 end }
             end
