@@ -1176,15 +1176,66 @@ local function bacaStokUI(namaGui)
     local wadah = frame and (frame:FindFirstChild("NormalShop") or frame:FindFirstChild("ScrollingFrame"))
     if not wadah then return {} end
 
-    local hasil = {}
-    for _, kartu in ipairs(wadah:GetChildren()) do
-        if kartu:IsA("Frame") and kartu.Name ~= "ItemTemplate" and kartu.Name ~= "Padding" then
-            local cost = kartu:FindFirstChild("Cost_Text", true)
-            local harga = cost and parseHarga(cost.Text) or 0
-            if harga > 0 then
-                hasil[#hasil + 1] = { nama = kartu.Name, harga = harga }
+    -- Dikumpulkan per-nama (bukan array biasa) supaya item yang sama
+    -- terlihat lagi di posisi scroll berikutnya tidak dobel.
+    local terkumpul = {}
+    local urutanNama = {}
+    local function sapuPosisiIni()
+        for _, kartu in ipairs(wadah:GetChildren()) do
+            if kartu:IsA("Frame") and kartu.Name ~= "ItemTemplate" and kartu.Name ~= "Padding" then
+                local cost = kartu:FindFirstChild("Cost_Text", true)
+                local harga = cost and parseHarga(cost.Text) or 0
+                if harga > 0 and not terkumpul[kartu.Name] then
+                    terkumpul[kartu.Name] = harga
+                    urutanNama[#urutanNama + 1] = kartu.Name
+                end
             end
         end
+    end
+
+    -- Rak di sini (terutama SeedShop) berisi lebih banyak item daripada yang
+    -- muat di satu layar. Kalau wadahnya benar-benar ScrollingFrame dan UI-nya
+    -- melakukan virtualisasi (cuma me-render kartu yang SEDANG terlihat di
+    -- posisi scroll saat ini, bukan seluruh isi rak sekaligus), GetChildren()
+    -- satu kali di posisi scroll default cuma menangkap kartu yang kebetulan
+    -- tampil -- persis mengapa cuma item termurah (mis. Maple Bamboo) yang
+    -- pernah terbaca padahal rak sungguhan berisi puluhan item. Menyapu dari
+    -- ATAS ke BAWAH, membaca ulang di tiap posisi, memastikan seluruh rak
+    -- ikut kebaca terlepas dari mekanisme render UI-nya. Kalau ternyata
+    -- BUKAN ScrollingFrame (atau semua anak memang sudah ada sekaligus),
+    -- ini cuma jadi satu kali baca biasa -- tidak merusak apa pun.
+    local disapu = pcall(function()
+        if wadah:IsA("ScrollingFrame") then
+            local posisiAsal = wadah.CanvasPosition
+            local tinggiLayar = math.max(wadah.AbsoluteWindowSize.Y, 1)
+            local tinggiTotal = math.max(wadah.AbsoluteCanvasSize.Y, tinggiLayar)
+            local y = 0
+            while y < tinggiTotal do
+                wadah.CanvasPosition = Vector2.new(0, y)
+                task.wait()
+                sapuPosisiIni()
+                y = y + tinggiLayar
+            end
+            -- Posisi paling bawah persis -- kalau tinggiTotal bukan kelipatan
+            -- tinggiLayar, langkah di atas bisa berhenti sedikit sebelum dasar.
+            wadah.CanvasPosition = Vector2.new(0, tinggiTotal)
+            task.wait()
+            sapuPosisiIni()
+            wadah.CanvasPosition = posisiAsal
+        else
+            sapuPosisiIni()
+        end
+    end)
+    if not disapu then
+        -- Fallback: minimal baca posisi scroll SAAT INI kalau penyapuan gagal
+        -- (mis. properti CanvasPosition/AbsoluteWindowSize tidak ada di
+        -- executor ini) -- lebih baik dapat sebagian daripada tidak sama sekali.
+        pcall(sapuPosisiIni)
+    end
+
+    local hasil = {}
+    for _, nama in ipairs(urutanNama) do
+        hasil[#hasil + 1] = { nama = nama, harga = terkumpul[nama] }
     end
     -- Termurah dulu, sesuai permintaan: beli dari termurah sampai termahal.
     table.sort(hasil, function(a, b) return a.harga < b.harga end)
