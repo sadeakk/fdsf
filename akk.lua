@@ -41,18 +41,15 @@ print("✅ Kaitun aktif (verifikasi panel key dinonaktifkan)")
 
 local Players            = game:GetService("Players")
 local ReplicatedStorage  = game:GetService("ReplicatedStorage")
+local TeleportService    = game:GetService("TeleportService")
 local LocalPlayer        = Players.LocalPlayer
 
 local Config = {
     -- Master switch. Dua sumber sengaja digabung: cfgFH (ABASUWFallHarvestConfig)
     -- untuk toggle khusus script ini, cfgMain (ABASUWAutoBuyConfig) untuk format
     -- config yang sudah dipakai panel/loader lain (BuySeeds/BuyGears/Seeds/Gears).
-    -- Keduanya ON secara default TANPA config sama sekali (getgenv() kosong) --
-    -- loadstring polos sudah langsung auto-beli seed DAN gear. Set salah
-    -- satunya eksplisit `false` (cfg.AutoBeliGear/cfgMain.BuyGears, dst.) kalau
-    -- mau mematikannya.
     AutoBeli      = (cfg.AutoBeli ~= false) and (cfgMain.BuySeeds ~= false),
-    AutoBeliGear  = (cfg.AutoBeliGear ~= false) and (cfgMain.BuyGears ~= false),
+    AutoBeliGear  = (cfg.AutoBeliGear == true) or (cfgMain.BuyGears == true),
     AutoJual      = cfg.AutoJual ~= false,
     -- Daily Deal diklaim SEBELUM SellAll -- lihat jual(). Buah yang termasuk
     -- daily deal dapat bonus lewat jalur ini; kalau SellAll jalan duluan,
@@ -65,17 +62,6 @@ local Config = {
     -- item lain (termasuk yang `false` atau tidak disebut) dilewati.
     SeedWhitelist = cfgMain.Seeds,
     GearWhitelist = cfgMain.Gears,
-
-    -- Daftar hitam per-nama: { ["Nama Item"] = true }. Kebalikan dari
-    -- whitelist -- item yang disebut di sini SELALU dilewati, terlepas dari
-    -- whitelist di atas. Dipakai untuk item yang TAMPIL di rak toko dengan
-    -- harga (jadi lolos bacaStokUI) tapi remote PurchaseSeed/PurchaseGear-nya
-    -- ditolak diam-diam oleh server (mis. item yang sebenarnya pet/Robux-only,
-    -- bukan item yang benar-benar bisa dibeli lewat jalur ini) -- tanpa
-    -- daftar ini, script akan terus mencoba membelinya tiap siklus selamanya
-    -- karena tidak ada cara mendeteksi penolakan diam-diam itu dari klien.
-    SeedBlacklist = cfgMain.SeedsExclude,
-    GearBlacklist = cfgMain.GearsExclude,
 
     FpsBoost      = cfg.FpsBoost ~= false,
     BlackScreen   = cfg.BlackScreen ~= false,
@@ -117,25 +103,7 @@ local Config = {
     JedaAksi      = tonumber(cfgMain.Delay) or tonumber(cfg.JedaAksi) or 0.35,
 
     JarakAman     = tonumber(cfg.JarakAman) or 12,
-
-    -- beliDari() membeli SATU unit dari SETIAP item yang terjangkau per
-    -- kunjungan NPC, bukan memborong satu item sampai stok/Leaves habis
-    -- sebelum pindah ke item berikutnya -- versi lama begitu, dan akibatnya
-    -- item TERMURAH (rak diurutkan termurah dulu, mis. Maple Bamboo) selalu
-    -- menghabiskan seluruh Leaves sendirian sebelum loop sempat mencoba
-    -- item kedua sama sekali. Beli lebih banyak dari item yang sama didapat
-    -- lewat SIKLUS BERIKUTNYA (Config.JedaSiklus), bukan lewat mengulang
-    -- dalam satu kunjungan -- pola ini disalin dari implementasi yang
-    -- terbukti dipakai (lihat riwayat git untuk sumbernya).
-    --
-    -- MaxBeliPerSiklus di sini jadi batas berapa BANYAK JENIS item berbeda
-    -- yang boleh dibeli dalam satu kunjungan (tiap item cuma sekali per
-    -- kunjungan) -- TAK TERBATAS secara default (0/tidak diisi).
-    MaxBeliPerSiklus = (function()
-        local v = tonumber(cfg.MaxBeliPerSiklus)
-        if not v or v <= 0 then return math.huge end
-        return v
-    end)(),
+    MaxBeliPerSiklus = tonumber(cfg.MaxBeliPerSiklus) or 20,
 
     -- studs/detik. Versi pertama memakai BodyPosition yang menarik dengan gaya
     -- besar, jadi karakter melesat ke tujuan -- terlihat jelas tidak wajar.
@@ -208,38 +176,28 @@ local Config = {
     MaksTungguSiap  = tonumber(cfg.MaksTungguSiap) or 60,
     JedaKlikSiap    = tonumber(cfg.JedaKlikSiap) or 1.5,
 
-    -- Jeda refresh panel "Bag Stock" (gear kiri, seed kanan) di black screen.
-    -- Data-nya sendiri (tasSeed/tasGear) diperbarui SAAT ITU JUGA tiap kali
-    -- pembelian sukses -- angka ini cuma mengatur seberapa sering teks di
-    -- layar digambar ulang, bukan seberapa sering datanya berubah.
-    JedaBagStock    = tonumber(cfg.JedaBagStock) or 300,
+    -- ==========================================================
+    -- PINDAH SERVER KALAU RAMAI
+    -- ==========================================================
+    -- Server dengan banyak pemain berarti banyak kebun orang lain yang harus
+    -- dimuat -- itu penyebab loading screen lama yang kamu lihat, bukan
+    -- masalah di skrip ini. Dicek PALING AWAL, sebelum tungguGameSiap()
+    -- dkk, supaya kalau memang mau pindah, tidak ada waktu yang terbuang
+    -- menunggu dunia yang toh akan ditinggalkan.
+    AutoPindahServer   = cfg.AutoPindahServer ~= false,
+    MaxPemainServer    = tonumber(cfg.MaxPemainServer) or 4,
+    -- Kalau kebetulan server-server yang ada SEMUA di atas batas (mis. jam
+    -- ramai), pindah terus-menerus tanpa henti berarti bot tidak pernah
+    -- benar-benar mulai bekerja. Batas percobaan ini (disimpan lewat
+    -- writefile/readfile supaya bertahan lintas pindah server, karena
+    -- pindah server = seluruh state Lua di-reset total) membuatnya menyerah
+    -- dan lanjut di server manapun setelah sekian kali gagal dapat yang sepi.
+    MaxPercobaanPindahServer = tonumber(cfg.MaxPercobaanPindahServer) or 5,
 }
 
 local function status(t)
     print("[FH] " .. t)
 end
-
--- ==========================================================
--- BAG STOCK (dari pembelian, BUKAN scan Backpack)
--- ==========================================================
--- Dua tabel { ["Nama Item"] = jumlah }, dihitung dari SEMUA pembelian sukses
--- sejak instance ini mulai -- lihat beliDari(). Versi ringkas ini tidak lagi
--- menanam/memanen/mencabut, jadi seed dan gear yang dibeli otomatis "duduk"
--- di bag apa adanya; menghitung dari sisi pembelian jauh lebih bisa
--- diandalkan daripada menebak nama Tool/atribut inventory asli yang belum
--- terverifikasi dari klien asli. Dibaca oleh HUD di pasangBlackScreen().
-local tasSeed = {}
-local tasGear = {}
-
--- ==========================================================
--- DIAGNOSTIK RAK (sementara, buat lacak "kok cuma 1 item yang kebeli")
--- ==========================================================
--- Berapa item yang bacaStokUI() TEMUKAN di rak (Mentah), dan berapa yang
--- LOLOS whitelist+blacklist (Saring) -- diisi tiap siklus di loop utama,
--- dibaca oleh HUD di pasangBlackScreen(). Tanpa akses console, ini satu-
--- satunya cara memastikan dari layar apakah masalahnya di PEMBACAAN rak
--- (mis. rak sungguhan cuma kebaca 1 item) atau di PENYARINGAN/PEMBELIAN.
-local rakStok = { seedMentah = 0, seedSaring = 0, gearMentah = 0, gearSaring = 0 }
 
 local okNet, Networking = pcall(function()
     return require(ReplicatedStorage.SharedModules.Networking)
@@ -247,6 +205,65 @@ end)
 if not okNet then
     status("[BERHENTI] Gagal me-require Networking module.")
     return
+end
+
+-- ==========================================================
+-- PINDAH SERVER KALAU RAMAI
+-- ==========================================================
+-- Dipanggil PALING AWAL (lihat URUTAN STARTUP), sebelum tungguGameSiap()
+-- dkk -- kalau memang mau pindah, tidak ada gunanya menunggu dunia yang
+-- toh akan ditinggalkan lebih dulu.
+--
+-- TIDAK PERNAH RETURN kalau benar-benar memicu pindah server: TeleportService
+-- tidak langsung memutus koneksi begitu dipanggil, jadi fungsi ini sengaja
+-- menunggu selamanya sesudahnya supaya sisa skrip (URUTAN STARTUP,
+-- LOOP UTAMA) tidak sempat jalan sia-sia sebelum benar-benar keluar server.
+local function cekDanPindahServerRamai()
+    if not Config.AutoPindahServer then return end
+
+    local jumlahPemain = #Players:GetPlayers()
+    if jumlahPemain <= Config.MaxPemainServer then return end
+
+    -- Percobaan disimpan lewat file, BUKAN variabel Lua biasa -- pindah
+    -- server memuat ulang seluruh VM Lua dari awal (sama seperti keluar-masuk
+    -- game), jadi variabel apa pun di memori hilang total. Tanpa file ini,
+    -- skrip tidak akan pernah tahu sudah berapa kali gagal dapat server sepi,
+    -- dan bisa pindah selamanya kalau semua server kebetulan ramai.
+    local percobaan = 0
+    local adaFile = typeof(readfile) == "function" and typeof(writefile) == "function"
+    if adaFile then
+        pcall(function()
+            percobaan = tonumber(readfile("fh_pindah_server.txt")) or 0
+        end)
+    end
+
+    if adaFile and percobaan >= Config.MaxPercobaanPindahServer then
+        status(string.format(
+            "[SERVER] %d pemain (batas %d), tapi sudah %d kali coba pindah -- menyerah, lanjut di sini",
+            jumlahPemain, Config.MaxPemainServer, percobaan))
+        pcall(function() writefile("fh_pindah_server.txt", "0") end)
+        return
+    end
+
+    status(string.format("[SERVER] %d pemain (batas %d) -- memicu pindah server (percobaan %d/%d)...",
+        jumlahPemain, Config.MaxPemainServer, percobaan + 1, Config.MaxPercobaanPindahServer))
+    if adaFile then
+        pcall(function() writefile("fh_pindah_server.txt", tostring(percobaan + 1)) end)
+    end
+
+    -- Teleport ke PlaceId yang sama = rejoin biasa lewat matchmaking Roblox,
+    -- bukan ke server tertentu -- tidak menjamin server berikutnya pasti
+    -- lebih sepi, cuma memberi kesempatan baru (dan matchmaking Roblox
+    -- umumnya lebih suka mengisi server yang belum penuh).
+    local dipicu = pcall(function()
+        TeleportService:Teleport(game.PlaceId, LocalPlayer)
+    end)
+
+    if dipicu then
+        while true do task.wait(1) end
+    else
+        status("[SERVER] Gagal memicu pindah server -- lanjut di server ini")
+    end
 end
 
 -- ==========================================================
@@ -519,26 +536,6 @@ local function ringkasAngka(n)
     else return tostring(n) end
 end
 
--- Merender tabel { ["Nama Item"] = jumlah } (tasSeed/tasGear) jadi teks
--- multi-baris untuk panel Bag Stock, terbanyak dulu -- yang paling menumpuk
--- di bag adalah yang paling ingin dilihat duluan.
-local function formatTas(tas)
-    local baris = {}
-    for nama, jumlah in pairs(tas) do
-        baris[#baris + 1] = { nama = nama, jumlah = jumlah }
-    end
-    if #baris == 0 then return "(kosong)" end
-    table.sort(baris, function(a, b)
-        if a.jumlah ~= b.jumlah then return a.jumlah > b.jumlah end
-        return a.nama < b.nama
-    end)
-    local teks = {}
-    for _, b in ipairs(baris) do
-        teks[#teks + 1] = string.format("%s x%d", b.nama, b.jumlah)
-    end
-    return table.concat(teks, "\n")
-end
-
 local function pasangBlackScreen()
     if not Config.BlackScreen then return end
 
@@ -624,37 +621,6 @@ local function pasangBlackScreen()
         strokeTengah.Color = Color3.fromRGB(0, 0, 0)
         strokeTengah.Parent = tengah
 
-        -- Panel "Bag Stock": gear di KIRI, seed di KANAN. Anak `bg` (sama
-        -- seperti `tengah`) supaya ikut tersembunyi/tampil bersama tombol
-        -- toggle Hide/Show -- bukan elemen terpisah yang bisa nyasar state-nya
-        -- sendiri.
-        local function buatPanelStok(sisi)
-            local kiri = sisi == "kiri"
-            local panel = Instance.new("TextLabel")
-            panel.Name = kiri and "BagStockGear" or "BagStockSeed"
-            panel.Size = UDim2.new(0.32, 0, 0.7, 0)
-            panel.Position = UDim2.new(kiri and 0 or 1, kiri and 8 or -8, 0.5, 0)
-            panel.AnchorPoint = Vector2.new(kiri and 0 or 1, 0.5)
-            panel.BackgroundTransparency = 1
-            panel.Text = (kiri and "🛠️ GEAR" or "🌱 SEED") .. "\n(memuat...)"
-            panel.TextColor3 = Color3.fromRGB(255, 255, 255)
-            panel.Font = Enum.Font.Gotham
-            panel.TextSize = 16
-            panel.TextWrapped = true
-            panel.TextXAlignment = kiri and Enum.TextXAlignment.Left or Enum.TextXAlignment.Right
-            panel.TextYAlignment = Enum.TextYAlignment.Top
-            panel.ZIndex = 10
-            panel.Parent = bg
-            local stroke = Instance.new("UIStroke")
-            stroke.Thickness = 1.25
-            stroke.Color = Color3.fromRGB(0, 0, 0)
-            stroke.Parent = panel
-            return panel
-        end
-
-        local panelGear = buatPanelStok("kiri")
-        local panelSeed = buatPanelStok("kanan")
-
         -- Ditempel ke CoreGui kalau executor mendukung, supaya tidak ikut hilang
         -- saat karakter respawn.
         local berhasil = pcall(function()
@@ -673,25 +639,8 @@ local function pasangBlackScreen()
                     if n then daun = n.Value end
                 end)
                 tengah.Text = "👤 " .. LocalPlayer.Name .. "\n🍃 " .. ringkasAngka(daun)
-                    .. string.format("\n🛒 Seed %d/%d · Gear %d/%d",
-                        rakStok.seedSaring, rakStok.seedMentah,
-                        rakStok.gearSaring, rakStok.gearMentah)
 
                 task.wait(1)
-            end
-        end)
-
-        -- Data (tasSeed/tasGear) sudah update SAAT ITU JUGA tiap pembelian
-        -- sukses (lihat beliDari) -- loop ini cuma menggambar ulang teksnya
-        -- secara berkala (Config.JedaBagStock, default 5 menit), bukan sumber
-        -- kebenaran datanya. Digambar sekali segera saat gui baru terpasang,
-        -- tidak menunggu 5 menit pertama, supaya panel tidak nyangkut di
-        -- "(memuat...)" lama-lama.
-        task.spawn(function()
-            while gui.Parent do
-                panelGear.Text = "🛠️ GEAR\n" .. formatTas(tasGear)
-                panelSeed.Text = "🌱 SEED\n" .. formatTas(tasSeed)
-                task.wait(Config.JedaBagStock)
             end
         end)
     end)
@@ -1176,66 +1125,15 @@ local function bacaStokUI(namaGui)
     local wadah = frame and (frame:FindFirstChild("NormalShop") or frame:FindFirstChild("ScrollingFrame"))
     if not wadah then return {} end
 
-    -- Dikumpulkan per-nama (bukan array biasa) supaya item yang sama
-    -- terlihat lagi di posisi scroll berikutnya tidak dobel.
-    local terkumpul = {}
-    local urutanNama = {}
-    local function sapuPosisiIni()
-        for _, kartu in ipairs(wadah:GetChildren()) do
-            if kartu:IsA("Frame") and kartu.Name ~= "ItemTemplate" and kartu.Name ~= "Padding" then
-                local cost = kartu:FindFirstChild("Cost_Text", true)
-                local harga = cost and parseHarga(cost.Text) or 0
-                if harga > 0 and not terkumpul[kartu.Name] then
-                    terkumpul[kartu.Name] = harga
-                    urutanNama[#urutanNama + 1] = kartu.Name
-                end
-            end
-        end
-    end
-
-    -- Rak di sini (terutama SeedShop) berisi lebih banyak item daripada yang
-    -- muat di satu layar. Kalau wadahnya benar-benar ScrollingFrame dan UI-nya
-    -- melakukan virtualisasi (cuma me-render kartu yang SEDANG terlihat di
-    -- posisi scroll saat ini, bukan seluruh isi rak sekaligus), GetChildren()
-    -- satu kali di posisi scroll default cuma menangkap kartu yang kebetulan
-    -- tampil -- persis mengapa cuma item termurah (mis. Maple Bamboo) yang
-    -- pernah terbaca padahal rak sungguhan berisi puluhan item. Menyapu dari
-    -- ATAS ke BAWAH, membaca ulang di tiap posisi, memastikan seluruh rak
-    -- ikut kebaca terlepas dari mekanisme render UI-nya. Kalau ternyata
-    -- BUKAN ScrollingFrame (atau semua anak memang sudah ada sekaligus),
-    -- ini cuma jadi satu kali baca biasa -- tidak merusak apa pun.
-    local disapu = pcall(function()
-        if wadah:IsA("ScrollingFrame") then
-            local posisiAsal = wadah.CanvasPosition
-            local tinggiLayar = math.max(wadah.AbsoluteWindowSize.Y, 1)
-            local tinggiTotal = math.max(wadah.AbsoluteCanvasSize.Y, tinggiLayar)
-            local y = 0
-            while y < tinggiTotal do
-                wadah.CanvasPosition = Vector2.new(0, y)
-                task.wait()
-                sapuPosisiIni()
-                y = y + tinggiLayar
-            end
-            -- Posisi paling bawah persis -- kalau tinggiTotal bukan kelipatan
-            -- tinggiLayar, langkah di atas bisa berhenti sedikit sebelum dasar.
-            wadah.CanvasPosition = Vector2.new(0, tinggiTotal)
-            task.wait()
-            sapuPosisiIni()
-            wadah.CanvasPosition = posisiAsal
-        else
-            sapuPosisiIni()
-        end
-    end)
-    if not disapu then
-        -- Fallback: minimal baca posisi scroll SAAT INI kalau penyapuan gagal
-        -- (mis. properti CanvasPosition/AbsoluteWindowSize tidak ada di
-        -- executor ini) -- lebih baik dapat sebagian daripada tidak sama sekali.
-        pcall(sapuPosisiIni)
-    end
-
     local hasil = {}
-    for _, nama in ipairs(urutanNama) do
-        hasil[#hasil + 1] = { nama = nama, harga = terkumpul[nama] }
+    for _, kartu in ipairs(wadah:GetChildren()) do
+        if kartu:IsA("Frame") and kartu.Name ~= "ItemTemplate" and kartu.Name ~= "Padding" then
+            local cost = kartu:FindFirstChild("Cost_Text", true)
+            local harga = cost and parseHarga(cost.Text) or 0
+            if harga > 0 then
+                hasil[#hasil + 1] = { nama = kartu.Name, harga = harga }
+            end
+        end
     end
     -- Termurah dulu, sesuai permintaan: beli dari termurah sampai termahal.
     table.sort(hasil, function(a, b) return a.harga < b.harga end)
@@ -1253,20 +1151,6 @@ local function saringWhitelist(daftar, whitelist)
     local hasil = {}
     for _, s in ipairs(daftar) do
         if whitelist[s.nama] == true then hasil[#hasil + 1] = s end
-    end
-    return hasil
-end
-
--- Saring daftar shop TERPISAH dari whitelist -- item bernilai `true` di
--- blacklist SELALU dibuang, apa pun kata whitelist. blacklist == nil berarti
--- tidak ada yang dibuang. Dipanggil SETELAH saringWhitelist() di loop utama,
--- jadi berlaku baik saat whitelist kosong (mode "beli semua") maupun saat
--- whitelist diisi.
-local function saringBlacklist(daftar, blacklist)
-    if not blacklist then return daftar end
-    local hasil = {}
-    for _, s in ipairs(daftar) do
-        if blacklist[s.nama] ~= true then hasil[#hasil + 1] = s end
     end
     return hasil
 end
@@ -1517,9 +1401,8 @@ end
 -- AKSI: BELI & JUAL
 -- ==========================================================
 -- Dipakai bersama oleh beli seed dan beli gear -- satu-satunya beda adalah
--- peran NPC yang didekati, remote yang ditembak, dan tabel Bag Stock mana
--- yang dihitung.
-local function beliDari(daftar, peran, tembak, labelNPC, tasHitung)
+-- peran NPC yang didekati, remote yang ditembak, dan nama GUI shop-nya.
+local function beliDari(daftar, peran, tembak, labelNPC, namaGuiShop)
     -- BEDA dengan jual: membeli WAJIB dari dekat.
     --
     -- Secara teknis PurchaseSeed/PurchaseGear tetap diterima dari jarak jauh,
@@ -1542,48 +1425,62 @@ local function beliDari(daftar, peran, tembak, labelNPC, tasHitung)
     for _, s in ipairs(daftar) do
         if dibeli >= Config.MaxBeliPerSiklus then break end
 
-        -- Jarak diperiksa ulang tiap item: karakter bisa terdorong menjauh di
-        -- tengah belanja. Dicoba ulang 3x sebelum menyerah -- terlempar dari
-        -- NPC itu lumrah dan sesaat (cooldown teleport ~0,3 detik), jadi
-        -- menyerah di percobaan pertama membuang sisa daftar belanja hanya
-        -- karena satu tembakan meleset.
-        if jarakKe(pos) > Config.JarakAman * 2 then
-            local kembali = false
-            for _ = 1, 3 do
-                if pergiKe(pos) then kembali = true break end
-                task.wait(0.6)
-            end
-            if not kembali then
-                status("[BATAL] Terlempar dari NPC dan gagal kembali 3x — sisa pembelian dihentikan")
-                break
-            end
-        end
+        -- Habiskan item INI dulu -- tembak berulang sampai stoknya hilang dari
+        -- rak atau Leaves tidak cukup lagi -- baru pindah ke item berikutnya.
+        -- Sebelumnya cuma satu tembakan per item lalu langsung lompat ke seed
+        -- lain, jadi tiap jenis cuma kebagian 1 biji walau stoknya masih ada.
+        local harga = s.harga
+        local dibeliItemIni = 0
+        -- Jaring pengaman: kalau tembakan terus gagal (error remote sesaat)
+        -- padahal stok dan Leaves masih cukup, tidak ada apa pun di atas yang
+        -- pernah menghentikan loop-nya -- ini satu-satunya yang membuatnya
+        -- berhenti alih-alih menembak sia-sia selamanya.
+        local gagalBerturut = 0
 
-        -- SATU unit per item per kunjungan -- BUKAN diborong sampai stok
-        -- habis. Rak diurutkan termurah dulu; kalau item termurah dulu
-        -- dibeli berulang sampai kehabisan Leaves SEBELUM pindah ke item
-        -- berikutnya, seluruh modal keburu habis untuk satu jenis saja dan
-        -- item lain di rak tidak pernah kebagian giliran -- persis yang
-        -- terjadi sebelumnya (cuma Maple Bamboo dibeli, lalu berhenti).
-        -- Beli 1 dari SETIAP item yang terjangkau, lalu andalkan siklus
-        -- berikutnya (Config.JedaSiklus) untuk giliran berikutnya -- itu
-        -- otomatis membeli lebih banyak dari item yang memang masih
-        -- terjangkau/tersedia tiap kali rak dibaca ulang.
-        if leaves() < s.harga then
-            -- Dilewati, BUKAN berhenti: item berikutnya di rak bisa saja
-            -- lebih murah (mis. setelah disaring whitelist/blacklist, urutan
-            -- harga aslinya sudah tidak berlaku lagi).
-        else
+        while dibeli < Config.MaxBeliPerSiklus do
+            -- Jarak diperiksa ulang tiap tembakan: karakter bisa terdorong
+            -- menjauh di tengah pembelian, dan satu fire dari jauh sudah
+            -- cukup untuk ditandai.
+            if jarakKe(pos) > Config.JarakAman * 2 then
+                if not pergiKe(pos) then
+                    status("[BATAL] Terlempar dari NPC, sisa pembelian dihentikan")
+                    return dibeli
+                end
+            end
+            if leaves() < harga then break end
+
             local ok = pcall(function() tembak(s.nama) end)
             if ok then
                 dibeli = dibeli + 1
-                -- Bag Stock (panel di pasangBlackScreen): dihitung dari sisi
-                -- pembelian, bukan scan Backpack -- lihat catatan di deklarasi
-                -- tasSeed/tasGear.
-                tasHitung[s.nama] = (tasHitung[s.nama] or 0) + 1
-                status(string.format("[BELI] %s (%d Leaves, sisa %d)", s.nama, s.harga, leaves()))
+                dibeliItemIni = dibeliItemIni + 1
+                gagalBerturut = 0
+            else
+                gagalBerturut = gagalBerturut + 1
+                if gagalBerturut >= 3 then
+                    status("[BATAL] " .. s.nama .. " gagal ditembak 3x berturut-turut — dilewati")
+                    break
+                end
             end
             task.wait(Config.JedaAksi)
+
+            -- Berhenti begitu item ini hilang dari rak (stok habis) --
+            -- dicek ulang dari UI yang sama persis dipakai stokShop()/
+            -- stokGear(), bukan ditebak dari berapa kali sudah menembak.
+            local stokTerkini = bacaStokUI(namaGuiShop)
+            local masihAda = false
+            for _, cek in ipairs(stokTerkini) do
+                if cek.nama == s.nama then
+                    masihAda = true
+                    harga = cek.harga
+                    break
+                end
+            end
+            if not masihAda then break end
+        end
+
+        if dibeliItemIni > 0 then
+            status(string.format("[BELI] %s x%d (%d Leaves, sisa %d)",
+                s.nama, dibeliItemIni, harga, leaves()))
         end
     end
     return dibeli
@@ -1592,13 +1489,13 @@ end
 local function beli(daftar)
     return beliDari(daftar, "seed",
         function(nama) Networking.SeedShop.PurchaseSeed:Fire(nama) end,
-        "penjual seed", tasSeed)
+        "penjual seed", "SeedShop")
 end
 
 local function beliGear(daftar)
     return beliDari(daftar, "gear",
         function(nama) Networking.GearShop.PurchaseGear:Fire(nama) end,
-        "penjual gear", tasGear)
+        "penjual gear", "GearShop")
 end
 
 local function jual()
@@ -1641,51 +1538,58 @@ end
 _G.FHInstance = (_G.FHInstance or 0) + 1
 local instanceSaya = _G.FHInstance
 
--- 1. TUNGGU DUNIA SIAP -- kebun & dekorasi orang lain mulai dibersihkan
+-- 1. CEK SERVER RAMAI -- PALING AWAL, sebelum apa pun yang lain. Kalau ini
+-- memicu pindah server, cekDanPindahServerRamai() TIDAK PERNAH balik ke sini
+-- (menunggu selamanya sampai benar-benar keluar) -- baris-baris di bawahnya
+-- cuma jalan kalau ternyata TIDAK jadi pindah.
+status(string.format("Aktif (#%d) — [1/7] cek jumlah pemain server...", instanceSaya))
+cekDanPindahServerRamai()
+
+-- 2. TUNGGU DUNIA SIAP -- kebun & dekorasi orang lain mulai dibersihkan
 -- SECARA PARALEL di sini (bersihkanAwal, task.spawn terpisah), bukan
 -- menunggu wait ini selesai dulu -- itu bagian yang aman dari FPS boost,
 -- tidak menyentuh kamera sama sekali. Bagian yang menyentuh kamera/Lighting
--- (applyFpsBoost) tetap menunggu sampai [4/6] di bawah.
-status(string.format("Aktif (#%d) — [1/6] menunggu dunia siap (kebun dibersihkan paralel)...", instanceSaya))
+-- (applyFpsBoost) tetap menunggu sampai [5/7] di bawah.
+status(string.format("Aktif (#%d) — [2/7] menunggu dunia siap (kebun dibersihkan paralel)...", instanceSaya))
 if Config.FpsBoost then
     task.spawn(function() pcall(bersihkanAwal) end)
 end
 tungguGameSiap()
 
--- 2. BLACK SCREEN
-status(string.format("Aktif (#%d) — [2/6] memasang black screen...", instanceSaya))
+-- 3. BLACK SCREEN
+status(string.format("Aktif (#%d) — [3/7] memasang black screen...", instanceSaya))
 pasangBlackScreen()
 
--- 3. ANTI-AFK
+-- 4. ANTI-AFK
 if Config.AntiAFK then
-    status(string.format("Aktif (#%d) — [3/6] memasang anti-AFK...", instanceSaya))
+    status(string.format("Aktif (#%d) — [4/7] memasang anti-AFK...", instanceSaya))
     pasangAntiAFK()
 end
 
--- 4. FPS BOOST (kamera/Lighting/kualitas) -- kebun & dekorasi sudah
--- dibersihkan lebih awal secara paralel lewat bersihkanAwal() di step 1;
+-- 5. FPS BOOST (kamera/Lighting/kualitas) -- kebun & dekorasi sudah
+-- dibersihkan lebih awal secara paralel lewat bersihkanAwal() di step 2;
 -- ini cuma bagian yang WAJIB menunggu dunia+kamera benar-benar siap. Kebun
 -- orang lain yang baru dimuat sesudahnya tetap dibersihkan lagi secara
 -- berkala di dalam siklus (lihat fase "bersih-kebun" di bawah).
-status(string.format("Aktif (#%d) — [4/6] FPS boost (kamera/Lighting)...", instanceSaya))
+status(string.format("Aktif (#%d) — [5/7] FPS boost (kamera/Lighting)...", instanceSaya))
 pcall(applyFpsBoost)
 
--- 5. HANCUR PETA JAUH DARI NPC (BasePart) -- AKTIF SECARA DEFAULT. Set
+-- 6. HANCUR PETA JAUH DARI NPC (BasePart) -- AKTIF SECARA DEFAULT. Set
 -- cfg.HancurkanPeta = false di config untuk mematikannya. Lihat catatan
 -- risiko panjang di Config.HancurkanPeta.
 if Config.HancurkanPeta then
     status(string.format(
-        "Aktif (#%d) — [5/6] Config.HancurkanPeta AKTIF: menghancurkan peta di luar radius %d studs dari NPC...",
+        "Aktif (#%d) — [6/7] Config.HancurkanPeta AKTIF: menghancurkan peta di luar radius %d studs dari NPC...",
         instanceSaya, Config.RadiusAmanPeta))
     pcall(hancurkanPetaJauh)
 end
 
--- 6. HANCUR TERRAIN JAUH DARI NPC -- opt-in, MATI kalau Config.HancurkanTerrain
+-- 7. HANCUR TERRAIN JAUH DARI NPC -- opt-in, MATI kalau Config.HancurkanTerrain
 -- tidak disetel true. Fitur lebih baru & lebih berisiko -- WAJIB diuji di
 -- satu akun dulu. Lihat catatan risiko panjang di Config.HancurkanTerrain.
 if Config.HancurkanTerrain then
     status(string.format(
-        "Aktif (#%d) — [6/6] Config.HancurkanTerrain AKTIF: membersihkan terrain di luar radius %d studs dari NPC...",
+        "Aktif (#%d) — [7/7] Config.HancurkanTerrain AKTIF: membersihkan terrain di luar radius %d studs dari NPC...",
         instanceSaya, Config.RadiusAmanPeta))
     pcall(hancurkanTerrainJauh)
 end
@@ -1732,20 +1636,14 @@ task.spawn(function()
 
             if Config.AutoBeli then
                 fase[#fase + 1] = { "beli", function()
-                    local mentah = stokShop()
-                    local stok = saringWhitelist(mentah, Config.SeedWhitelist)
-                    stok = saringBlacklist(stok, Config.SeedBlacklist)
-                    rakStok.seedMentah, rakStok.seedSaring = #mentah, #stok
+                    local stok = saringWhitelist(stokShop(), Config.SeedWhitelist)
                     if #stok > 0 then beli(stok) end
                 end }
             end
 
             if Config.AutoBeliGear then
                 fase[#fase + 1] = { "beli-gear", function()
-                    local mentah = stokGear()
-                    local stok = saringWhitelist(mentah, Config.GearWhitelist)
-                    stok = saringBlacklist(stok, Config.GearBlacklist)
-                    rakStok.gearMentah, rakStok.gearSaring = #mentah, #stok
+                    local stok = saringWhitelist(stokGear(), Config.GearWhitelist)
                     if #stok > 0 then beliGear(stok) end
                 end }
             end
