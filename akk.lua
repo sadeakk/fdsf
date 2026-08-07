@@ -103,7 +103,19 @@ local Config = {
     JedaAksi      = tonumber(cfgMain.Delay) or tonumber(cfg.JedaAksi) or 0.35,
 
     JarakAman     = tonumber(cfg.JarakAman) or 12,
-    MaxBeliPerSiklus = tonumber(cfg.MaxBeliPerSiklus) or 20,
+
+    -- beliDari() membeli SATU unit dari SETIAP item yang terjangkau per
+    -- kunjungan NPC (bukan memborong satu item sampai Leaves habis sebelum
+    -- pindah ke item berikutnya), jadi ini adalah batas berapa BANYAK JENIS
+    -- item berbeda yang boleh dibeli dalam satu kunjungan. TAK TERBATAS
+    -- secara default (0/tidak diisi) -- rak seed di sini berisi puluhan
+    -- item (lihat SeedData), dan batas kecil di sini akan berhenti di
+    -- beberapa item termurah setiap kali, sama seperti sebelumnya.
+    MaxBeliPerSiklus = (function()
+        local v = tonumber(cfg.MaxBeliPerSiklus)
+        if not v or v <= 0 then return math.huge end
+        return v
+    end)(),
 
     -- studs/detik. Versi pertama memakai BodyPosition yang menarik dengan gaya
     -- besar, jadi karakter melesat ke tujuan -- terlihat jelas tidak wajar.
@@ -205,6 +217,58 @@ end)
 if not okNet then
     status("[BERHENTI] Gagal me-require Networking module.")
     return
+end
+
+-- ==========================================================
+-- DATA HARGA SEED & GEAR (dari modul game, BUKAN dari teks UI toko)
+-- ==========================================================
+-- Awalnya stok/harga dibaca dari PlayerGui.SeedShop/GearShop...Cost_Text.
+-- Itu ternyata TIDAK BISA DIANDALKAN: UI toko baru terisi SETELAH pemain
+-- pernah membuka tokonya -- script ini tidak pernah membuka toko (cuma
+-- mendekat lalu menembak remote beli), jadi Cost_Text yang terbaca basi/
+-- nyaris kosong, dan itulah sebabnya cuma satu seed termurah (yang
+-- kebetulan sudah ter-cache di UI) yang pernah kebeli berulang-ulang.
+--
+-- SeedData/GearShopData tereplikasi terus dari server tanpa perlu membuka
+-- apa pun, jadi dipakai sebagai sumber nama+harga -- lihat bacaStok().
+local okSeedData, SeedData = pcall(function()
+    return require(ReplicatedStorage.SharedModules.SeedData)
+end)
+-- SeedData adalah ARRAY (bukan map bernama); nama yang dipakai shop ada di
+-- field SeedName, harga di PurchasePrice -- diindeks sekali di sini.
+local infoSeedHarga = {}
+if okSeedData and type(SeedData) == "table" then
+    for _, e in pairs(SeedData) do
+        if type(e) == "table" and e.SeedName then
+            infoSeedHarga[e.SeedName] = tonumber(e.PurchasePrice)
+        end
+    end
+else
+    status("[PERINGATAN] Gagal memuat SeedData -- auto-beli seed tidak akan menemukan item apa pun")
+end
+
+local okGearData, GearShopData = pcall(function()
+    return require(ReplicatedStorage.SharedModules.GearShopData)
+end)
+-- GearShopData bersarang beberapa lapis (per kategori), jadi ditelusuri
+-- rekursif, bukan diindeks langsung -- dikumpulkan SEMUA entri yang punya
+-- ItemName+Cost, di kedalaman berapa pun (sampai batas wajar).
+local infoGearHarga = {}
+if okGearData and type(GearShopData) == "table" then
+    local function kumpulkanGear(t, dalam)
+        if dalam > 4 then return end
+        for _, v in pairs(t) do
+            if type(v) == "table" then
+                if v.ItemName and v.Cost then
+                    infoGearHarga[v.ItemName] = tonumber(v.Cost)
+                end
+                kumpulkanGear(v, dalam + 1)
+            end
+        end
+    end
+    kumpulkanGear(GearShopData, 0)
+else
+    status("[PERINGATAN] Gagal memuat GearShopData -- auto-beli gear tidak akan menemukan item apa pun")
 end
 
 -- ==========================================================
@@ -1102,36 +1166,28 @@ end
 -- ==========================================================
 -- SHOP
 -- ==========================================================
--- Struktur UI-nya: Frame.NormalShop berisi kartu bernama item, harga di
--- Cost_Text ("1c", "2.5Kc", "NO STOCK").
-local function parseHarga(teks)
-    if not teks then return 0 end
-    local c = string.upper(teks)
-    c = c:gsub("%s+", ""):gsub("\194\162", ""):gsub("\238\128\130", "")
-    if c:match("^X%d+") then return 0 end
-    local num, suf = c:match("([%d%.%,]+)([MBK]?)")
-    if not num then return 0 end
-    local a = tonumber((num:gsub(",", ""))) or 0
-    if suf == "K" then a = a * 1e3 elseif suf == "M" then a = a * 1e6 elseif suf == "B" then a = a * 1e9 end
-    return a
-end
-
--- Struktur UI SeedShop dan GearShop sama persis, cuma nama ScreenGui-nya
--- berbeda -- satu fungsi generik dipakai untuk keduanya.
-local function bacaStokUI(namaGui)
-    local pg = LocalPlayer:FindFirstChild("PlayerGui")
-    local shop = pg and pg:FindFirstChild(namaGui)
-    local frame = shop and shop:FindFirstChild("Frame")
-    local wadah = frame and (frame:FindFirstChild("NormalShop") or frame:FindFirstChild("ScrollingFrame"))
-    if not wadah then return {} end
+-- Stok DIBACA DARI ReplicatedStorage.StockValues, BUKAN dari teks UI toko --
+-- lihat catatan panjang di deklarasi infoSeedHarga/infoGearHarga soal kenapa
+-- UI (Cost_Text) tidak bisa diandalkan di sini (baru terisi setelah toko
+-- pernah dibuka pemain, dan script ini tidak pernah membukanya).
+-- StockValues.<Shop>.Items berisi satu ValueBase per item dengan JUMLAH
+-- stok saat ini, tereplikasi terus dari server tanpa perlu membuka apa pun.
+-- Nama+harga datang dari infoHarga (SeedData/GearShopData) yang diindeks di
+-- atas -- item yang stoknya > 0 tapi harganya tidak dikenal (tidak ada di
+-- data) dilewati, sama seperti item yang stoknya 0.
+local function bacaStok(namaShop, infoHarga)
+    local sv = ReplicatedStorage:FindFirstChild("StockValues")
+    local shop = sv and sv:FindFirstChild(namaShop)
+    local items = shop and shop:FindFirstChild("Items")
+    if not items then return {} end
 
     local hasil = {}
-    for _, kartu in ipairs(wadah:GetChildren()) do
-        if kartu:IsA("Frame") and kartu.Name ~= "ItemTemplate" and kartu.Name ~= "Padding" then
-            local cost = kartu:FindFirstChild("Cost_Text", true)
-            local harga = cost and parseHarga(cost.Text) or 0
-            if harga > 0 then
-                hasil[#hasil + 1] = { nama = kartu.Name, harga = harga }
+    for _, v in ipairs(items:GetChildren()) do
+        if v:IsA("ValueBase") then
+            local jumlah = tonumber(v.Value) or 0
+            local harga = infoHarga[v.Name]
+            if jumlah > 0 and harga then
+                hasil[#hasil + 1] = { nama = v.Name, harga = harga }
             end
         end
     end
@@ -1140,8 +1196,8 @@ local function bacaStokUI(namaGui)
     return hasil
 end
 
-local function stokShop() return bacaStokUI("SeedShop") end
-local function stokGear() return bacaStokUI("GearShop") end
+local function stokShop() return bacaStok("SeedShop", infoSeedHarga) end
+local function stokGear() return bacaStok("GearShop", infoGearHarga) end
 
 -- Saring daftar shop sesuai whitelist config ({ ["Nama Item"] = true/false }).
 -- whitelist == nil berarti TIDAK ada penyaringan -- beli semua yang ada di rak.
@@ -1401,8 +1457,8 @@ end
 -- AKSI: BELI & JUAL
 -- ==========================================================
 -- Dipakai bersama oleh beli seed dan beli gear -- satu-satunya beda adalah
--- peran NPC yang didekati, remote yang ditembak, dan nama GUI shop-nya.
-local function beliDari(daftar, peran, tembak, labelNPC, namaGuiShop)
+-- peran NPC yang didekati dan remote yang ditembak.
+local function beliDari(daftar, peran, tembak, labelNPC)
     -- BEDA dengan jual: membeli WAJIB dari dekat.
     --
     -- Secara teknis PurchaseSeed/PurchaseGear tetap diterima dari jarak jauh,
@@ -1425,62 +1481,41 @@ local function beliDari(daftar, peran, tembak, labelNPC, namaGuiShop)
     for _, s in ipairs(daftar) do
         if dibeli >= Config.MaxBeliPerSiklus then break end
 
-        -- Habiskan item INI dulu -- tembak berulang sampai stoknya hilang dari
-        -- rak atau Leaves tidak cukup lagi -- baru pindah ke item berikutnya.
-        -- Sebelumnya cuma satu tembakan per item lalu langsung lompat ke seed
-        -- lain, jadi tiap jenis cuma kebagian 1 biji walau stoknya masih ada.
-        local harga = s.harga
-        local dibeliItemIni = 0
-        -- Jaring pengaman: kalau tembakan terus gagal (error remote sesaat)
-        -- padahal stok dan Leaves masih cukup, tidak ada apa pun di atas yang
-        -- pernah menghentikan loop-nya -- ini satu-satunya yang membuatnya
-        -- berhenti alih-alih menembak sia-sia selamanya.
-        local gagalBerturut = 0
-
-        while dibeli < Config.MaxBeliPerSiklus do
-            -- Jarak diperiksa ulang tiap tembakan: karakter bisa terdorong
-            -- menjauh di tengah pembelian, dan satu fire dari jauh sudah
-            -- cukup untuk ditandai.
-            if jarakKe(pos) > Config.JarakAman * 2 then
-                if not pergiKe(pos) then
-                    status("[BATAL] Terlempar dari NPC, sisa pembelian dihentikan")
-                    return dibeli
-                end
+        -- Jarak diperiksa ulang tiap item: karakter bisa terdorong menjauh di
+        -- tengah belanja. Dicoba ulang 3x sebelum menyerah -- terlempar dari
+        -- NPC itu lumrah dan sesaat (cooldown teleport ~0,3 detik), jadi
+        -- menyerah di percobaan pertama membuang sisa daftar belanja hanya
+        -- karena satu tembakan meleset.
+        if jarakKe(pos) > Config.JarakAman * 2 then
+            local kembali = false
+            for _ = 1, 3 do
+                if pergiKe(pos) then kembali = true break end
+                task.wait(0.6)
             end
-            if leaves() < harga then break end
+            if not kembali then
+                status("[BATAL] Terlempar dari NPC dan gagal kembali 3x — sisa pembelian dihentikan")
+                break
+            end
+        end
 
+        -- SATU unit per item per kunjungan -- BUKAN diborong sampai stok
+        -- habis. Rak diurutkan termurah dulu; kalau item termurah dibeli
+        -- berulang sampai kehabisan Leaves SEBELUM pindah ke item
+        -- berikutnya, seluruh modal keburu habis untuk satu jenis saja dan
+        -- item lain di rak tidak pernah kebagian giliran. Beli 1 dari SETIAP
+        -- item yang terjangkau, lalu andalkan siklus berikutnya
+        -- (Config.JedaSiklus) untuk giliran berikutnya.
+        if leaves() < s.harga then
+            -- Dilewati, BUKAN berhenti: item berikutnya di rak bisa saja
+            -- lebih murah (mis. setelah disaring whitelist, urutan harga
+            -- aslinya sudah tidak berlaku lagi).
+        else
             local ok = pcall(function() tembak(s.nama) end)
             if ok then
                 dibeli = dibeli + 1
-                dibeliItemIni = dibeliItemIni + 1
-                gagalBerturut = 0
-            else
-                gagalBerturut = gagalBerturut + 1
-                if gagalBerturut >= 3 then
-                    status("[BATAL] " .. s.nama .. " gagal ditembak 3x berturut-turut — dilewati")
-                    break
-                end
+                status(string.format("[BELI] %s (%d Leaves, sisa %d)", s.nama, s.harga, leaves()))
             end
             task.wait(Config.JedaAksi)
-
-            -- Berhenti begitu item ini hilang dari rak (stok habis) --
-            -- dicek ulang dari UI yang sama persis dipakai stokShop()/
-            -- stokGear(), bukan ditebak dari berapa kali sudah menembak.
-            local stokTerkini = bacaStokUI(namaGuiShop)
-            local masihAda = false
-            for _, cek in ipairs(stokTerkini) do
-                if cek.nama == s.nama then
-                    masihAda = true
-                    harga = cek.harga
-                    break
-                end
-            end
-            if not masihAda then break end
-        end
-
-        if dibeliItemIni > 0 then
-            status(string.format("[BELI] %s x%d (%d Leaves, sisa %d)",
-                s.nama, dibeliItemIni, harga, leaves()))
         end
     end
     return dibeli
@@ -1489,13 +1524,13 @@ end
 local function beli(daftar)
     return beliDari(daftar, "seed",
         function(nama) Networking.SeedShop.PurchaseSeed:Fire(nama) end,
-        "penjual seed", "SeedShop")
+        "penjual seed")
 end
 
 local function beliGear(daftar)
     return beliDari(daftar, "gear",
         function(nama) Networking.GearShop.PurchaseGear:Fire(nama) end,
-        "penjual gear", "GearShop")
+        "penjual gear")
 end
 
 local function jual()
