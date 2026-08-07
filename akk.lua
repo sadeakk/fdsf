@@ -231,6 +231,16 @@ end
 local tasSeed = {}
 local tasGear = {}
 
+-- ==========================================================
+-- DIAGNOSTIK RAK (sementara, buat lacak "kok cuma 1 item yang kebeli")
+-- ==========================================================
+-- Berapa item yang bacaStokUI() TEMUKAN di rak (Mentah), dan berapa yang
+-- LOLOS whitelist+blacklist (Saring) -- diisi tiap siklus di loop utama,
+-- dibaca oleh HUD di pasangBlackScreen(). Tanpa akses console, ini satu-
+-- satunya cara memastikan dari layar apakah masalahnya di PEMBACAAN rak
+-- (mis. rak sungguhan cuma kebaca 1 item) atau di PENYARINGAN/PEMBELIAN.
+local rakStok = { seedMentah = 0, seedSaring = 0, gearMentah = 0, gearSaring = 0 }
+
 local okNet, Networking = pcall(function()
     return require(ReplicatedStorage.SharedModules.Networking)
 end)
@@ -663,6 +673,9 @@ local function pasangBlackScreen()
                     if n then daun = n.Value end
                 end)
                 tengah.Text = "👤 " .. LocalPlayer.Name .. "\n🍃 " .. ringkasAngka(daun)
+                    .. string.format("\n🛒 Seed %d/%d · Gear %d/%d",
+                        rakStok.seedSaring, rakStok.seedMentah,
+                        rakStok.gearSaring, rakStok.gearMentah)
 
                 task.wait(1)
             end
@@ -1668,16 +1681,20 @@ task.spawn(function()
 
             if Config.AutoBeli then
                 fase[#fase + 1] = { "beli", function()
-                    local stok = saringWhitelist(stokShop(), Config.SeedWhitelist)
+                    local mentah = stokShop()
+                    local stok = saringWhitelist(mentah, Config.SeedWhitelist)
                     stok = saringBlacklist(stok, Config.SeedBlacklist)
+                    rakStok.seedMentah, rakStok.seedSaring = #mentah, #stok
                     if #stok > 0 then beli(stok) end
                 end }
             end
 
             if Config.AutoBeliGear then
                 fase[#fase + 1] = { "beli-gear", function()
-                    local stok = saringWhitelist(stokGear(), Config.GearWhitelist)
+                    local mentah = stokGear()
+                    local stok = saringWhitelist(mentah, Config.GearWhitelist)
                     stok = saringBlacklist(stok, Config.GearBlacklist)
+                    rakStok.gearMentah, rakStok.gearSaring = #mentah, #stok
                     if #stok > 0 then beliGear(stok) end
                 end }
             end
