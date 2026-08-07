@@ -41,7 +41,6 @@ print("✅ Kaitun aktif (verifikasi panel key dinonaktifkan)")
 
 local Players            = game:GetService("Players")
 local ReplicatedStorage  = game:GetService("ReplicatedStorage")
-local TeleportService    = game:GetService("TeleportService")
 local LocalPlayer        = Players.LocalPlayer
 
 local Config = {
@@ -175,24 +174,6 @@ local Config = {
     -- waktunya yang bisa diatur, bukan on/off-nya.
     MaksTungguSiap  = tonumber(cfg.MaksTungguSiap) or 60,
     JedaKlikSiap    = tonumber(cfg.JedaKlikSiap) or 1.5,
-
-    -- ==========================================================
-    -- PINDAH SERVER KALAU RAMAI
-    -- ==========================================================
-    -- Server dengan banyak pemain berarti banyak kebun orang lain yang harus
-    -- dimuat -- itu penyebab loading screen lama yang kamu lihat, bukan
-    -- masalah di skrip ini. Dicek PALING AWAL, sebelum tungguGameSiap()
-    -- dkk, supaya kalau memang mau pindah, tidak ada waktu yang terbuang
-    -- menunggu dunia yang toh akan ditinggalkan.
-    AutoPindahServer   = cfg.AutoPindahServer ~= false,
-    MaxPemainServer    = tonumber(cfg.MaxPemainServer) or 4,
-    -- Kalau kebetulan server-server yang ada SEMUA di atas batas (mis. jam
-    -- ramai), pindah terus-menerus tanpa henti berarti bot tidak pernah
-    -- benar-benar mulai bekerja. Batas percobaan ini (disimpan lewat
-    -- writefile/readfile supaya bertahan lintas pindah server, karena
-    -- pindah server = seluruh state Lua di-reset total) membuatnya menyerah
-    -- dan lanjut di server manapun setelah sekian kali gagal dapat yang sepi.
-    MaxPercobaanPindahServer = tonumber(cfg.MaxPercobaanPindahServer) or 5,
 }
 
 local function status(t)
@@ -205,65 +186,6 @@ end)
 if not okNet then
     status("[BERHENTI] Gagal me-require Networking module.")
     return
-end
-
--- ==========================================================
--- PINDAH SERVER KALAU RAMAI
--- ==========================================================
--- Dipanggil PALING AWAL (lihat URUTAN STARTUP), sebelum tungguGameSiap()
--- dkk -- kalau memang mau pindah, tidak ada gunanya menunggu dunia yang
--- toh akan ditinggalkan lebih dulu.
---
--- TIDAK PERNAH RETURN kalau benar-benar memicu pindah server: TeleportService
--- tidak langsung memutus koneksi begitu dipanggil, jadi fungsi ini sengaja
--- menunggu selamanya sesudahnya supaya sisa skrip (URUTAN STARTUP,
--- LOOP UTAMA) tidak sempat jalan sia-sia sebelum benar-benar keluar server.
-local function cekDanPindahServerRamai()
-    if not Config.AutoPindahServer then return end
-
-    local jumlahPemain = #Players:GetPlayers()
-    if jumlahPemain <= Config.MaxPemainServer then return end
-
-    -- Percobaan disimpan lewat file, BUKAN variabel Lua biasa -- pindah
-    -- server memuat ulang seluruh VM Lua dari awal (sama seperti keluar-masuk
-    -- game), jadi variabel apa pun di memori hilang total. Tanpa file ini,
-    -- skrip tidak akan pernah tahu sudah berapa kali gagal dapat server sepi,
-    -- dan bisa pindah selamanya kalau semua server kebetulan ramai.
-    local percobaan = 0
-    local adaFile = typeof(readfile) == "function" and typeof(writefile) == "function"
-    if adaFile then
-        pcall(function()
-            percobaan = tonumber(readfile("fh_pindah_server.txt")) or 0
-        end)
-    end
-
-    if adaFile and percobaan >= Config.MaxPercobaanPindahServer then
-        status(string.format(
-            "[SERVER] %d pemain (batas %d), tapi sudah %d kali coba pindah -- menyerah, lanjut di sini",
-            jumlahPemain, Config.MaxPemainServer, percobaan))
-        pcall(function() writefile("fh_pindah_server.txt", "0") end)
-        return
-    end
-
-    status(string.format("[SERVER] %d pemain (batas %d) -- memicu pindah server (percobaan %d/%d)...",
-        jumlahPemain, Config.MaxPemainServer, percobaan + 1, Config.MaxPercobaanPindahServer))
-    if adaFile then
-        pcall(function() writefile("fh_pindah_server.txt", tostring(percobaan + 1)) end)
-    end
-
-    -- Teleport ke PlaceId yang sama = rejoin biasa lewat matchmaking Roblox,
-    -- bukan ke server tertentu -- tidak menjamin server berikutnya pasti
-    -- lebih sepi, cuma memberi kesempatan baru (dan matchmaking Roblox
-    -- umumnya lebih suka mengisi server yang belum penuh).
-    local dipicu = pcall(function()
-        TeleportService:Teleport(game.PlaceId, LocalPlayer)
-    end)
-
-    if dipicu then
-        while true do task.wait(1) end
-    else
-        status("[SERVER] Gagal memicu pindah server -- lanjut di server ini")
-    end
 end
 
 -- ==========================================================
@@ -1538,58 +1460,51 @@ end
 _G.FHInstance = (_G.FHInstance or 0) + 1
 local instanceSaya = _G.FHInstance
 
--- 1. CEK SERVER RAMAI -- PALING AWAL, sebelum apa pun yang lain. Kalau ini
--- memicu pindah server, cekDanPindahServerRamai() TIDAK PERNAH balik ke sini
--- (menunggu selamanya sampai benar-benar keluar) -- baris-baris di bawahnya
--- cuma jalan kalau ternyata TIDAK jadi pindah.
-status(string.format("Aktif (#%d) — [1/7] cek jumlah pemain server...", instanceSaya))
-cekDanPindahServerRamai()
-
--- 2. TUNGGU DUNIA SIAP -- kebun & dekorasi orang lain mulai dibersihkan
+-- 1. TUNGGU DUNIA SIAP -- kebun & dekorasi orang lain mulai dibersihkan
 -- SECARA PARALEL di sini (bersihkanAwal, task.spawn terpisah), bukan
 -- menunggu wait ini selesai dulu -- itu bagian yang aman dari FPS boost,
 -- tidak menyentuh kamera sama sekali. Bagian yang menyentuh kamera/Lighting
--- (applyFpsBoost) tetap menunggu sampai [5/7] di bawah.
-status(string.format("Aktif (#%d) — [2/7] menunggu dunia siap (kebun dibersihkan paralel)...", instanceSaya))
+-- (applyFpsBoost) tetap menunggu sampai [4/6] di bawah.
+status(string.format("Aktif (#%d) — [1/6] menunggu dunia siap (kebun dibersihkan paralel)...", instanceSaya))
 if Config.FpsBoost then
     task.spawn(function() pcall(bersihkanAwal) end)
 end
 tungguGameSiap()
 
--- 3. BLACK SCREEN
-status(string.format("Aktif (#%d) — [3/7] memasang black screen...", instanceSaya))
+-- 2. BLACK SCREEN
+status(string.format("Aktif (#%d) — [2/6] memasang black screen...", instanceSaya))
 pasangBlackScreen()
 
--- 4. ANTI-AFK
+-- 3. ANTI-AFK
 if Config.AntiAFK then
-    status(string.format("Aktif (#%d) — [4/7] memasang anti-AFK...", instanceSaya))
+    status(string.format("Aktif (#%d) — [3/6] memasang anti-AFK...", instanceSaya))
     pasangAntiAFK()
 end
 
--- 5. FPS BOOST (kamera/Lighting/kualitas) -- kebun & dekorasi sudah
--- dibersihkan lebih awal secara paralel lewat bersihkanAwal() di step 2;
+-- 4. FPS BOOST (kamera/Lighting/kualitas) -- kebun & dekorasi sudah
+-- dibersihkan lebih awal secara paralel lewat bersihkanAwal() di step 1;
 -- ini cuma bagian yang WAJIB menunggu dunia+kamera benar-benar siap. Kebun
 -- orang lain yang baru dimuat sesudahnya tetap dibersihkan lagi secara
 -- berkala di dalam siklus (lihat fase "bersih-kebun" di bawah).
-status(string.format("Aktif (#%d) — [5/7] FPS boost (kamera/Lighting)...", instanceSaya))
+status(string.format("Aktif (#%d) — [4/6] FPS boost (kamera/Lighting)...", instanceSaya))
 pcall(applyFpsBoost)
 
--- 6. HANCUR PETA JAUH DARI NPC (BasePart) -- AKTIF SECARA DEFAULT. Set
+-- 5. HANCUR PETA JAUH DARI NPC (BasePart) -- AKTIF SECARA DEFAULT. Set
 -- cfg.HancurkanPeta = false di config untuk mematikannya. Lihat catatan
 -- risiko panjang di Config.HancurkanPeta.
 if Config.HancurkanPeta then
     status(string.format(
-        "Aktif (#%d) — [6/7] Config.HancurkanPeta AKTIF: menghancurkan peta di luar radius %d studs dari NPC...",
+        "Aktif (#%d) — [5/6] Config.HancurkanPeta AKTIF: menghancurkan peta di luar radius %d studs dari NPC...",
         instanceSaya, Config.RadiusAmanPeta))
     pcall(hancurkanPetaJauh)
 end
 
--- 7. HANCUR TERRAIN JAUH DARI NPC -- opt-in, MATI kalau Config.HancurkanTerrain
+-- 6. HANCUR TERRAIN JAUH DARI NPC -- opt-in, MATI kalau Config.HancurkanTerrain
 -- tidak disetel true. Fitur lebih baru & lebih berisiko -- WAJIB diuji di
 -- satu akun dulu. Lihat catatan risiko panjang di Config.HancurkanTerrain.
 if Config.HancurkanTerrain then
     status(string.format(
-        "Aktif (#%d) — [7/7] Config.HancurkanTerrain AKTIF: membersihkan terrain di luar radius %d studs dari NPC...",
+        "Aktif (#%d) — [6/6] Config.HancurkanTerrain AKTIF: membersihkan terrain di luar radius %d studs dari NPC...",
         instanceSaya, Config.RadiusAmanPeta))
     pcall(hancurkanTerrainJauh)
 end
