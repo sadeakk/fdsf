@@ -106,7 +106,14 @@ local Config = {
     -- yang kamu tempel dari panel langsung berlaku tanpa perlu isi cfgFH juga.
     JedaAksi      = tonumber(cfgMain.Delay) or tonumber(cfg.JedaAksi) or 0.35,
 
-    JarakAman     = tonumber(cfg.JarakAman) or 12,
+    -- Toleransi "sudah cukup dekat" saat terbang ke NPC. 12 studs terbukti
+    -- terlalu longgar -- karakter berhenti "dekat tapi tidak cukup dekat",
+    -- dan pembelian ditolak diam-diam (tembak berhasil dikirim, tapi server
+    -- menolaknya karena jaraknya sendiri, bukan stok/harga) sehingga terlihat
+    -- seperti nge-spam item yang sama tanpa pernah benar-benar berhasil.
+    -- Diperketat jauh lebih dekat supaya selalu berada dalam jangkauan
+    -- interaksi NPC, apa pun radius sesungguhnya di server.
+    JarakAman     = tonumber(cfg.JarakAman) or 5,
 
     -- beliDari() membeli SATU unit dari SETIAP item yang terjangkau per
     -- kunjungan NPC (bukan memborong satu item sampai Leaves habis sebelum
