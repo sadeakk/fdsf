@@ -272,6 +272,25 @@ else
 end
 
 -- ==========================================================
+-- DIAGNOSTIK RAK (sementara, buat lacak "kok cuma 1-2 item yang kebeli")
+-- ==========================================================
+-- Diisi tiap siklus di loop utama, dibaca oleh HUD di pasangBlackScreen().
+-- Tujuannya membedakan dua kemungkinan tanpa perlu akses console: (a) rak
+-- SUNGGUHAN cuma berisi 1-2 item saat ini (restock terbatas/acak -- lihat
+-- StockValues.<Shop>.UnixNextRestock), yang berarti script sudah benar dan
+-- tinggal menunggu restock berikutnya, atau (b) rak sebenarnya berisi lebih
+-- banyak tapi ada bug lain yang membuang sisanya.
+local rakStok = { seedN = 0, seedRestock = 0, gearN = 0, gearRestock = 0 }
+
+local function detikKeRestock(namaShop)
+    local sv = ReplicatedStorage:FindFirstChild("StockValues")
+    local shop = sv and sv:FindFirstChild(namaShop)
+    local n = shop and shop:FindFirstChild("UnixNextRestock")
+    if not (n and n:IsA("ValueBase")) then return nil end
+    return math.max(0, (tonumber(n.Value) or 0) - os.time())
+end
+
+-- ==========================================================
 -- PINDAH SERVER KALAU RAMAI
 -- ==========================================================
 -- Dipanggil PALING AWAL (lihat URUTAN STARTUP), sebelum tungguGameSiap()
@@ -703,6 +722,8 @@ local function pasangBlackScreen()
                     if n then daun = n.Value end
                 end)
                 tengah.Text = "👤 " .. LocalPlayer.Name .. "\n🍃 " .. ringkasAngka(daun)
+                    .. string.format("\n🛒 Seed %d (restock %ds) · Gear %d (restock %ds)",
+                        rakStok.seedN, rakStok.seedRestock, rakStok.gearN, rakStok.gearRestock)
 
                 task.wait(1)
             end
@@ -1671,14 +1692,20 @@ task.spawn(function()
 
             if Config.AutoBeli then
                 fase[#fase + 1] = { "beli", function()
-                    local stok = saringWhitelist(stokShop(), Config.SeedWhitelist)
+                    local mentah = stokShop()
+                    rakStok.seedN = #mentah
+                    rakStok.seedRestock = detikKeRestock("SeedShop") or 0
+                    local stok = saringWhitelist(mentah, Config.SeedWhitelist)
                     if #stok > 0 then beli(stok) end
                 end }
             end
 
             if Config.AutoBeliGear then
                 fase[#fase + 1] = { "beli-gear", function()
-                    local stok = saringWhitelist(stokGear(), Config.GearWhitelist)
+                    local mentah = stokGear()
+                    rakStok.gearN = #mentah
+                    rakStok.gearRestock = detikKeRestock("GearShop") or 0
+                    local stok = saringWhitelist(mentah, Config.GearWhitelist)
                     if #stok > 0 then beliGear(stok) end
                 end }
             end
