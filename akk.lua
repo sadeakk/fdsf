@@ -2,9 +2,11 @@
     SMART KAITUN — FALL HARVEST (versi ringkas)
     Hanya: beli seed -> jual (SellAll), diulang terus, ditambah FPS boost,
     anti-AFK, dan black-screen HUD. Menanam, memanen, mencabut, quest,
-    mode bambu, kolektor seed jatuhan, sinkronisasi panel, dan sistem
-    pindah-dunia SUDAH DIHAPUS dari versi ini -- lihat riwayat git kalau
-    perlu mengembalikannya.
+    mode bambu, kolektor seed jatuhan, sinkronisasi panel, sistem
+    pindah-dunia, auto-rejoin server ramai, dan penantian dunia siap
+    SUDAH DIHAPUS dari versi ini -- lihat riwayat git kalau perlu
+    mengembalikannya. Startup sekarang langsung jalan tanpa menunggu
+    apa pun (lihat catatan risiko di URUTAN STARTUP).
 
     Signature remote yang masih dipakai, ditangkap dari klien asli:
       SeedShop.PurchaseSeed:Fire("Maple Carrot")
@@ -41,7 +43,6 @@ print("✅ Kaitun aktif (verifikasi panel key dinonaktifkan)")
 
 local Players            = game:GetService("Players")
 local ReplicatedStorage  = game:GetService("ReplicatedStorage")
-local TeleportService    = game:GetService("TeleportService")
 local LocalPlayer        = Players.LocalPlayer
 
 local Config = {
@@ -168,31 +169,9 @@ local Config = {
     TinggiTerrainBawah   = tonumber(cfg.TinggiTerrainBawah) or 150,
     UkuranSelTerrain     = tonumber(cfg.UkuranSelTerrain) or 40,
 
-    -- Menunggu dunia siap TIDAK bisa dimatikan lewat config -- disengaja.
-    -- Script ini dipakai tanpa pengawasan di cloud phone, jadi tidak boleh ada
-    -- jalur yang membuatnya menembak beli/jual sebelum karakter dan dunia
-    -- benar-benar termuat hanya karena config salah ketik. Hanya angka
-    -- waktunya yang bisa diatur, bukan on/off-nya.
+    -- Dipakai bersihkanAwal() untuk menunggu folder Gardens muncul sebelum
+    -- menyerah -- lihat pemakaiannya di sana.
     MaksTungguSiap  = tonumber(cfg.MaksTungguSiap) or 60,
-    JedaKlikSiap    = tonumber(cfg.JedaKlikSiap) or 1.5,
-
-    -- ==========================================================
-    -- PINDAH SERVER KALAU RAMAI
-    -- ==========================================================
-    -- Server dengan banyak pemain berarti banyak kebun orang lain yang harus
-    -- dimuat -- itu penyebab loading screen lama yang kamu lihat, bukan
-    -- masalah di skrip ini. Dicek PALING AWAL, sebelum tungguGameSiap()
-    -- dkk, supaya kalau memang mau pindah, tidak ada waktu yang terbuang
-    -- menunggu dunia yang toh akan ditinggalkan.
-    AutoPindahServer   = cfg.AutoPindahServer ~= false,
-    MaxPemainServer    = tonumber(cfg.MaxPemainServer) or 4,
-    -- Kalau kebetulan server-server yang ada SEMUA di atas batas (mis. jam
-    -- ramai), pindah terus-menerus tanpa henti berarti bot tidak pernah
-    -- benar-benar mulai bekerja. Batas percobaan ini (disimpan lewat
-    -- writefile/readfile supaya bertahan lintas pindah server, karena
-    -- pindah server = seluruh state Lua di-reset total) membuatnya menyerah
-    -- dan lanjut di server manapun setelah sekian kali gagal dapat yang sepi.
-    MaxPercobaanPindahServer = tonumber(cfg.MaxPercobaanPindahServer) or 5,
 }
 
 local function status(t)
@@ -205,142 +184,6 @@ end)
 if not okNet then
     status("[BERHENTI] Gagal me-require Networking module.")
     return
-end
-
--- ==========================================================
--- PINDAH SERVER KALAU RAMAI
--- ==========================================================
--- Dipanggil PALING AWAL (lihat URUTAN STARTUP), sebelum tungguGameSiap()
--- dkk -- kalau memang mau pindah, tidak ada gunanya menunggu dunia yang
--- toh akan ditinggalkan lebih dulu.
---
--- TIDAK PERNAH RETURN kalau benar-benar memicu pindah server: TeleportService
--- tidak langsung memutus koneksi begitu dipanggil, jadi fungsi ini sengaja
--- menunggu selamanya sesudahnya supaya sisa skrip (URUTAN STARTUP,
--- LOOP UTAMA) tidak sempat jalan sia-sia sebelum benar-benar keluar server.
-local function cekDanPindahServerRamai()
-    if not Config.AutoPindahServer then return end
-
-    local jumlahPemain = #Players:GetPlayers()
-    if jumlahPemain <= Config.MaxPemainServer then return end
-
-    -- Percobaan disimpan lewat file, BUKAN variabel Lua biasa -- pindah
-    -- server memuat ulang seluruh VM Lua dari awal (sama seperti keluar-masuk
-    -- game), jadi variabel apa pun di memori hilang total. Tanpa file ini,
-    -- skrip tidak akan pernah tahu sudah berapa kali gagal dapat server sepi,
-    -- dan bisa pindah selamanya kalau semua server kebetulan ramai.
-    local percobaan = 0
-    local adaFile = typeof(readfile) == "function" and typeof(writefile) == "function"
-    if adaFile then
-        pcall(function()
-            percobaan = tonumber(readfile("fh_pindah_server.txt")) or 0
-        end)
-    end
-
-    if adaFile and percobaan >= Config.MaxPercobaanPindahServer then
-        status(string.format(
-            "[SERVER] %d pemain (batas %d), tapi sudah %d kali coba pindah -- menyerah, lanjut di sini",
-            jumlahPemain, Config.MaxPemainServer, percobaan))
-        pcall(function() writefile("fh_pindah_server.txt", "0") end)
-        return
-    end
-
-    status(string.format("[SERVER] %d pemain (batas %d) -- memicu pindah server (percobaan %d/%d)...",
-        jumlahPemain, Config.MaxPemainServer, percobaan + 1, Config.MaxPercobaanPindahServer))
-    if adaFile then
-        pcall(function() writefile("fh_pindah_server.txt", tostring(percobaan + 1)) end)
-    end
-
-    -- Teleport ke PlaceId yang sama = rejoin biasa lewat matchmaking Roblox,
-    -- bukan ke server tertentu -- tidak menjamin server berikutnya pasti
-    -- lebih sepi, cuma memberi kesempatan baru (dan matchmaking Roblox
-    -- umumnya lebih suka mengisi server yang belum penuh).
-    local dipicu = pcall(function()
-        TeleportService:Teleport(game.PlaceId, LocalPlayer)
-    end)
-
-    if dipicu then
-        while true do task.wait(1) end
-    else
-        status("[SERVER] Gagal memicu pindah server -- lanjut di server ini")
-    end
-end
-
--- ==========================================================
--- TUNGGU GAME SIAP
--- ==========================================================
--- Dua strategi digabung, keduanya generik karena nama GUI animasi home/intro
--- dunia ini belum terverifikasi dari klien asli:
---   1. Klik tengah layar berkala -- kebanyakan tombol "Play"/pop-up tutorial
---      duduk di tengah, dan klik tidak merusak apa pun kalau ternyata tidak
---      ada yang perlu diklik.
---   2. Anggap "siap" begitu karakter (HumanoidRootPart+Humanoid), leaderstats
---      Leaves, dan folder dunia (Gardens/NPCS) semuanya sudah ada -- itu bukti
---      langsung sesi sudah masuk gameplay sungguhan, bukan sekadar menebak
---      berapa lama animasinya berjalan.
-local function klikTengahLayar()
-    local vim = game:GetService("VirtualInputManager")
-    local cam = workspace.CurrentCamera
-    local vp = (cam and cam.ViewportSize) or Vector2.new(1280, 720)
-    local x, y = vp.X / 2, vp.Y / 2
-    pcall(function()
-        vim:SendMouseButtonEvent(x, y, 0, true, game, 1)
-        task.wait(0.05)
-        vim:SendMouseButtonEvent(x, y, 0, false, game, 1)
-    end)
-end
-
-local function duniaSudahSiap()
-    local char = LocalPlayer.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    local ls = LocalPlayer:FindFirstChild("leaderstats")
-    local daun = ls and ls:FindFirstChild("Leaves")
-    local cam = workspace.CurrentCamera
-
-    -- Animasi intro/home biasanya dikendalikan dengan menyetel CameraType ke
-    -- Scriptable, lalu dikembalikan ke Custom (ikut pemain) begitu selesai.
-    -- Tanpa pemeriksaan ini, karakter/leaderstats/dunia bisa saja sudah ada
-    -- SEMENTARA animasinya masih berjalan dan kamera masih dikendalikan game
-    -- -- lalu applyFpsBoost() ikut menyentuh CurrentCamera (FieldOfView) di
-    -- tengah animasi itu dan kameranya macet, tidak pernah kembali mengikuti
-    -- pemain.
-    local kameraSiap = cam ~= nil and cam.CameraType == Enum.CameraType.Custom
-
-    return hrp ~= nil and hum ~= nil and daun ~= nil
-        and workspace:FindFirstChild("Gardens") ~= nil
-        and workspace:FindFirstChild("NPCS") ~= nil
-        and kameraSiap
-end
-
--- Selalu berjalan, tanpa jalur mati -- lihat catatan di Config.MaksTungguSiap
--- soal kenapa ini bukan toggle.
-local function tungguGameSiap()
-    status("[SIAP] Menunggu dunia termuat...")
-
-    local berhenti = false
-    task.spawn(function()
-        while not berhenti do
-            klikTengahLayar()
-            task.wait(Config.JedaKlikSiap)
-        end
-    end)
-
-    local batas = tick() + Config.MaksTungguSiap
-    while tick() < batas and not duniaSudahSiap() do
-        task.wait(0.5)
-    end
-    berhenti = true
-
-    if duniaSudahSiap() then
-        status("[SIAP] Dunia siap")
-    else
-        -- Setiap pemanggilan remote/baca state lain di script ini sudah
-        -- dibungkus pcall/pengecekan nil sendiri-sendiri, jadi melanjutkan
-        -- walau timeout tetap aman -- hanya berarti fase pertama mungkin
-        -- gagal dan dicoba lagi siklus berikutnya.
-        status("[SIAP] Timeout menunggu — lanjut jalan seadanya")
-    end
 end
 
 -- ==========================================================
@@ -968,29 +811,27 @@ local function pasangHookGardenBaru()
 end
 
 -- Bagian FPS boost yang TIDAK menyentuh kamera/Lighting sama sekali --
--- hanya kebun dan dekorasi di workspace. Aman dijalankan SECARA PARALEL
--- dengan tungguGameSiap() (lihat URUTAN STARTUP), supaya kebun orang lain
--- sudah mulai dibersihkan sementara wait itu masih berjalan -- bukan
--- menunggu wait itu selesai dulu baru mulai.
+-- hanya kebun dan dekorasi di workspace. Dijalankan di task.spawn terpisah
+-- (lihat URUTAN STARTUP) supaya tidak memblokir langkah berikutnya kalau
+-- kebunnya besar/lambat dimuat.
 --
--- SENGAJA dipisah dari applyFpsBoost(): FieldOfView/Lighting.Technology
--- DI SANA wajib menunggu dunia+kamera benar-benar siap (lihat catatan
--- panjang di duniaSudahSiap soal kamera macet), sedangkan pembersihan
--- kebun di sini sama sekali tidak bergantung pada status kamera.
+-- SENGAJA dipisah dari applyFpsBoost(): FieldOfView/Lighting.Technology DI
+-- SANA menyentuh kamera, sedangkan pembersihan kebun di sini sama sekali
+-- tidak bergantung pada status kamera.
 local function bersihkanAwal()
     if not Config.FpsBoost then return end
 
     -- Fungsi ini bisa mulai jalan SEBELUM Gardens sempat termuat sama sekali
-    -- (karena dipanggil paralel, bukan setelah tungguGameSiap()). Tanpa
-    -- penantian ini, pasangHookGardenBaru() di bawah bisa gagal terpasang
-    -- PERMANEN untuk sisa sesi kalau Gardens belum ada sama sekali saat
-    -- dipanggil -- fungsi itu tidak mencoba lagi sendiri sesudahnya.
+    -- (dipanggil dari task.spawn terpisah, tanpa menunggu apa pun lebih
+    -- dulu). Tanpa penantian ini, pasangHookGardenBaru() di bawah bisa gagal
+    -- terpasang PERMANEN untuk sisa sesi kalau Gardens belum ada sama sekali
+    -- saat dipanggil -- fungsi itu tidak mencoba lagi sendiri sesudahnya.
     local batasGardens = tick() + Config.MaksTungguSiap
     while tick() < batasGardens and not workspace:FindFirstChild("Gardens") do
         task.wait(0.5)
     end
 
-    status("[FPS] Membersihkan kebun & dekorasi (paralel sambil menunggu dunia siap)...")
+    status("[FPS] Membersihkan kebun & dekorasi...")
 
     bersihkanKebunOrang(true)
     bersihkanFruitPlantSendiri()
@@ -1026,10 +867,10 @@ local function bersihkanAwal()
     pasangHookHiasanBaru()
 end
 
--- Bagian FPS boost yang MENYENTUH kamera/Lighting -- tetap wajib menunggu
--- dunia+kamera benar-benar siap (lihat duniaSudahSiap), jadi tetap
--- dipanggil SETELAH tungguGameSiap() selesai, bukan diparalelkan seperti
--- bersihkanAwal() di atas.
+-- Bagian FPS boost yang MENYENTUH kamera/Lighting -- dipanggil langsung
+-- (bukan lewat task.spawn) dari URUTAN STARTUP, tidak diparalelkan seperti
+-- bersihkanAwal() di atas. Tidak ada lagi penantian dunia/kamera siap
+-- sebelum ini (lihat catatan risiko di URUTAN STARTUP).
 local function applyFpsBoost()
     if not Config.FpsBoost then return end
     status("[FPS] Menyesuaikan lighting/kamera/kualitas...")
@@ -1538,58 +1379,55 @@ end
 _G.FHInstance = (_G.FHInstance or 0) + 1
 local instanceSaya = _G.FHInstance
 
--- 1. CEK SERVER RAMAI -- PALING AWAL, sebelum apa pun yang lain. Kalau ini
--- memicu pindah server, cekDanPindahServerRamai() TIDAK PERNAH balik ke sini
--- (menunggu selamanya sampai benar-benar keluar) -- baris-baris di bawahnya
--- cuma jalan kalau ternyata TIDAK jadi pindah.
-status(string.format("Aktif (#%d) — [1/7] cek jumlah pemain server...", instanceSaya))
-cekDanPindahServerRamai()
+-- Cek server ramai DAN menunggu dunia siap SUDAH DIHAPUS dari versi ini atas
+-- permintaan -- lihat riwayat git kalau perlu mengembalikannya. Startup
+-- sekarang langsung jalan tanpa menunggu apa pun; RISIKO YANG DITERIMA:
+-- applyFpsBoost() di bawah menyentuh kamera dan bisa saja jalan SEBELUM
+-- animasi intro/home selesai (kamera masih Scriptable, bukan Custom), yang
+-- tadinya dicegah oleh pengecekan yang dihapus -- kalau itu terjadi, kamera
+-- bisa macet dan tidak pernah kembali mengikuti pemain sampai rejoin.
 
--- 2. TUNGGU DUNIA SIAP -- kebun & dekorasi orang lain mulai dibersihkan
--- SECARA PARALEL di sini (bersihkanAwal, task.spawn terpisah), bukan
--- menunggu wait ini selesai dulu -- itu bagian yang aman dari FPS boost,
--- tidak menyentuh kamera sama sekali. Bagian yang menyentuh kamera/Lighting
--- (applyFpsBoost) tetap menunggu sampai [5/7] di bawah.
-status(string.format("Aktif (#%d) — [2/7] menunggu dunia siap (kebun dibersihkan paralel)...", instanceSaya))
+-- 1. GARDEN & DEKORASI (bagian FPS boost yang tidak menyentuh kamera) --
+-- dijalankan di task.spawn terpisah supaya tidak memblokir langkah
+-- berikutnya kalau kebunnya besar/lambat dimuat.
+status(string.format("Aktif (#%d) — [1/5] membersihkan kebun & dekorasi...", instanceSaya))
 if Config.FpsBoost then
     task.spawn(function() pcall(bersihkanAwal) end)
 end
-tungguGameSiap()
 
--- 3. BLACK SCREEN
-status(string.format("Aktif (#%d) — [3/7] memasang black screen...", instanceSaya))
+-- 2. BLACK SCREEN
+status(string.format("Aktif (#%d) — [2/5] memasang black screen...", instanceSaya))
 pasangBlackScreen()
 
--- 4. ANTI-AFK
+-- 3. ANTI-AFK
 if Config.AntiAFK then
-    status(string.format("Aktif (#%d) — [4/7] memasang anti-AFK...", instanceSaya))
+    status(string.format("Aktif (#%d) — [3/5] memasang anti-AFK...", instanceSaya))
     pasangAntiAFK()
 end
 
--- 5. FPS BOOST (kamera/Lighting/kualitas) -- kebun & dekorasi sudah
--- dibersihkan lebih awal secara paralel lewat bersihkanAwal() di step 2;
--- ini cuma bagian yang WAJIB menunggu dunia+kamera benar-benar siap. Kebun
--- orang lain yang baru dimuat sesudahnya tetap dibersihkan lagi secara
--- berkala di dalam siklus (lihat fase "bersih-kebun" di bawah).
-status(string.format("Aktif (#%d) — [5/7] FPS boost (kamera/Lighting)...", instanceSaya))
+-- 4. FPS BOOST (kamera/Lighting/kualitas). Kebun & dekorasi sudah
+-- dibersihkan secara paralel lewat bersihkanAwal() di step 1. Kebun orang
+-- lain yang baru dimuat sesudahnya tetap dibersihkan lagi secara berkala di
+-- dalam siklus (lihat fase "bersih-kebun" di bawah).
+status(string.format("Aktif (#%d) — [4/5] FPS boost (kamera/Lighting)...", instanceSaya))
 pcall(applyFpsBoost)
 
--- 6. HANCUR PETA JAUH DARI NPC (BasePart) -- AKTIF SECARA DEFAULT. Set
+-- 5. HANCUR PETA JAUH DARI NPC (BasePart) -- AKTIF SECARA DEFAULT. Set
 -- cfg.HancurkanPeta = false di config untuk mematikannya. Lihat catatan
 -- risiko panjang di Config.HancurkanPeta.
 if Config.HancurkanPeta then
     status(string.format(
-        "Aktif (#%d) — [6/7] Config.HancurkanPeta AKTIF: menghancurkan peta di luar radius %d studs dari NPC...",
+        "Aktif (#%d) — [5/5] Config.HancurkanPeta AKTIF: menghancurkan peta di luar radius %d studs dari NPC...",
         instanceSaya, Config.RadiusAmanPeta))
     pcall(hancurkanPetaJauh)
 end
 
--- 7. HANCUR TERRAIN JAUH DARI NPC -- opt-in, MATI kalau Config.HancurkanTerrain
+-- HANCUR TERRAIN JAUH DARI NPC -- opt-in, MATI kalau Config.HancurkanTerrain
 -- tidak disetel true. Fitur lebih baru & lebih berisiko -- WAJIB diuji di
 -- satu akun dulu. Lihat catatan risiko panjang di Config.HancurkanTerrain.
 if Config.HancurkanTerrain then
     status(string.format(
-        "Aktif (#%d) — [7/7] Config.HancurkanTerrain AKTIF: membersihkan terrain di luar radius %d studs dari NPC...",
+        "Aktif (#%d) — Config.HancurkanTerrain AKTIF: membersihkan terrain di luar radius %d studs dari NPC...",
         instanceSaya, Config.RadiusAmanPeta))
     pcall(hancurkanTerrainJauh)
 end
