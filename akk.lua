@@ -231,16 +231,32 @@ end
 --
 -- SeedData/GearShopData tereplikasi terus dari server tanpa perlu membuka
 -- apa pun, jadi dipakai sebagai sumber nama+harga -- lihat bacaStok().
+-- Nama field PERSIS (SeedName/PurchasePrice, ItemName/Cost) ditebak dari
+-- referensi eksternal, bukan diverifikasi langsung dari modul game ini --
+-- kalau tebakannya sedikit meleset (mis. field-nya "Name" bukan "SeedName"),
+-- infoSeedHarga/infoGearHarga jadi nyaris kosong dan HAMPIR SEMUA item
+-- dilewati bacaStok() walau stoknya penuh. Beberapa kandidat nama field
+-- dicoba berurutan per entri supaya tidak bergantung pada SATU tebakan.
+local function cariField(t, kandidat)
+    for _, k in ipairs(kandidat) do
+        if t[k] ~= nil then return t[k] end
+    end
+    return nil
+end
+local KANDIDAT_NAMA = { "SeedName", "ItemName", "Name", "Id", "id" }
+local KANDIDAT_HARGA = { "PurchasePrice", "Cost", "Price", "BuyPrice", "Sheckles" }
+
 local okSeedData, SeedData = pcall(function()
     return require(ReplicatedStorage.SharedModules.SeedData)
 end)
--- SeedData adalah ARRAY (bukan map bernama); nama yang dipakai shop ada di
--- field SeedName, harga di PurchasePrice -- diindeks sekali di sini.
+-- SeedData adalah ARRAY (bukan map bernama).
 local infoSeedHarga = {}
 if okSeedData and type(SeedData) == "table" then
     for _, e in pairs(SeedData) do
-        if type(e) == "table" and e.SeedName then
-            infoSeedHarga[e.SeedName] = tonumber(e.PurchasePrice)
+        if type(e) == "table" then
+            local nm = cariField(e, KANDIDAT_NAMA)
+            local hg = cariField(e, KANDIDAT_HARGA)
+            if nm and hg then infoSeedHarga[nm] = tonumber(hg) end
         end
     end
 else
@@ -251,17 +267,17 @@ local okGearData, GearShopData = pcall(function()
     return require(ReplicatedStorage.SharedModules.GearShopData)
 end)
 -- GearShopData bersarang beberapa lapis (per kategori), jadi ditelusuri
--- rekursif, bukan diindeks langsung -- dikumpulkan SEMUA entri yang punya
--- ItemName+Cost, di kedalaman berapa pun (sampai batas wajar).
+-- rekursif, bukan diindeks langsung -- dikumpulkan SEMUA entri yang cocok,
+-- di kedalaman berapa pun (sampai batas wajar).
 local infoGearHarga = {}
 if okGearData and type(GearShopData) == "table" then
     local function kumpulkanGear(t, dalam)
         if dalam > 4 then return end
         for _, v in pairs(t) do
             if type(v) == "table" then
-                if v.ItemName and v.Cost then
-                    infoGearHarga[v.ItemName] = tonumber(v.Cost)
-                end
+                local nm = cariField(v, KANDIDAT_NAMA)
+                local hg = cariField(v, KANDIDAT_HARGA)
+                if nm and hg then infoGearHarga[nm] = tonumber(hg) end
                 kumpulkanGear(v, dalam + 1)
             end
         end
@@ -270,6 +286,18 @@ if okGearData and type(GearShopData) == "table" then
 else
     status("[PERINGATAN] Gagal memuat GearShopData -- auto-beli gear tidak akan menemukan item apa pun")
 end
+
+-- Berapa entri yang berhasil diindeks (nama+harga sama-sama ketemu) --
+-- ditampilkan di HUD (lihat rakStok) supaya kelihatan dari layar kalau
+-- SeedData/GearShopData gagal dimuat atau nama fieldnya meleset semua,
+-- BUKAN cuma "stoknya memang sedikit".
+local function hitungIsi(t)
+    local n = 0
+    for _ in pairs(t) do n = n + 1 end
+    return n
+end
+local jumlahInfoSeed = hitungIsi(infoSeedHarga)
+local jumlahInfoGear = hitungIsi(infoGearHarga)
 
 -- ==========================================================
 -- DIAGNOSTIK RAK (sementara, buat lacak "kok cuma 1-2 item yang kebeli")
@@ -722,8 +750,9 @@ local function pasangBlackScreen()
                     if n then daun = n.Value end
                 end)
                 tengah.Text = "👤 " .. LocalPlayer.Name .. "\n🍃 " .. ringkasAngka(daun)
-                    .. string.format("\n🛒 Seed %d (restock %ds) · Gear %d (restock %ds)",
+                    .. string.format("\n🛒 Rak: Seed %d/%ds · Gear %d/%ds",
                         rakStok.seedN, rakStok.seedRestock, rakStok.gearN, rakStok.gearRestock)
+                    .. string.format("\n📦 Data: Seed %d · Gear %d", jumlahInfoSeed, jumlahInfoGear)
 
                 task.wait(1)
             end
