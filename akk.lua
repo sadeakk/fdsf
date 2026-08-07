@@ -174,11 +174,29 @@ local Config = {
     -- waktunya yang bisa diatur, bukan on/off-nya.
     MaksTungguSiap  = tonumber(cfg.MaksTungguSiap) or 60,
     JedaKlikSiap    = tonumber(cfg.JedaKlikSiap) or 1.5,
+
+    -- Jeda refresh panel "Bag Stock" (gear kiri, seed kanan) di black screen.
+    -- Data-nya sendiri (tasSeed/tasGear) diperbarui SAAT ITU JUGA tiap kali
+    -- pembelian sukses -- angka ini cuma mengatur seberapa sering teks di
+    -- layar digambar ulang, bukan seberapa sering datanya berubah.
+    JedaBagStock    = tonumber(cfg.JedaBagStock) or 300,
 }
 
 local function status(t)
     print("[FH] " .. t)
 end
+
+-- ==========================================================
+-- BAG STOCK (dari pembelian, BUKAN scan Backpack)
+-- ==========================================================
+-- Dua tabel { ["Nama Item"] = jumlah }, dihitung dari SEMUA pembelian sukses
+-- sejak instance ini mulai -- lihat beliDari(). Versi ringkas ini tidak lagi
+-- menanam/memanen/mencabut, jadi seed dan gear yang dibeli otomatis "duduk"
+-- di bag apa adanya; menghitung dari sisi pembelian jauh lebih bisa
+-- diandalkan daripada menebak nama Tool/atribut inventory asli yang belum
+-- terverifikasi dari klien asli. Dibaca oleh HUD di pasangBlackScreen().
+local tasSeed = {}
+local tasGear = {}
 
 local okNet, Networking = pcall(function()
     return require(ReplicatedStorage.SharedModules.Networking)
@@ -458,6 +476,26 @@ local function ringkasAngka(n)
     else return tostring(n) end
 end
 
+-- Merender tabel { ["Nama Item"] = jumlah } (tasSeed/tasGear) jadi teks
+-- multi-baris untuk panel Bag Stock, terbanyak dulu -- yang paling menumpuk
+-- di bag adalah yang paling ingin dilihat duluan.
+local function formatTas(tas)
+    local baris = {}
+    for nama, jumlah in pairs(tas) do
+        baris[#baris + 1] = { nama = nama, jumlah = jumlah }
+    end
+    if #baris == 0 then return "(kosong)" end
+    table.sort(baris, function(a, b)
+        if a.jumlah ~= b.jumlah then return a.jumlah > b.jumlah end
+        return a.nama < b.nama
+    end)
+    local teks = {}
+    for _, b in ipairs(baris) do
+        teks[#teks + 1] = string.format("%s x%d", b.nama, b.jumlah)
+    end
+    return table.concat(teks, "\n")
+end
+
 local function pasangBlackScreen()
     if not Config.BlackScreen then return end
 
@@ -543,6 +581,37 @@ local function pasangBlackScreen()
         strokeTengah.Color = Color3.fromRGB(0, 0, 0)
         strokeTengah.Parent = tengah
 
+        -- Panel "Bag Stock": gear di KIRI, seed di KANAN. Anak `bg` (sama
+        -- seperti `tengah`) supaya ikut tersembunyi/tampil bersama tombol
+        -- toggle Hide/Show -- bukan elemen terpisah yang bisa nyasar state-nya
+        -- sendiri.
+        local function buatPanelStok(sisi)
+            local kiri = sisi == "kiri"
+            local panel = Instance.new("TextLabel")
+            panel.Name = kiri and "BagStockGear" or "BagStockSeed"
+            panel.Size = UDim2.new(0.32, 0, 0.7, 0)
+            panel.Position = UDim2.new(kiri and 0 or 1, kiri and 8 or -8, 0.5, 0)
+            panel.AnchorPoint = Vector2.new(kiri and 0 or 1, 0.5)
+            panel.BackgroundTransparency = 1
+            panel.Text = (kiri and "🛠️ GEAR" or "🌱 SEED") .. "\n(memuat...)"
+            panel.TextColor3 = Color3.fromRGB(255, 255, 255)
+            panel.Font = Enum.Font.Gotham
+            panel.TextSize = 16
+            panel.TextWrapped = true
+            panel.TextXAlignment = kiri and Enum.TextXAlignment.Left or Enum.TextXAlignment.Right
+            panel.TextYAlignment = Enum.TextYAlignment.Top
+            panel.ZIndex = 10
+            panel.Parent = bg
+            local stroke = Instance.new("UIStroke")
+            stroke.Thickness = 1.25
+            stroke.Color = Color3.fromRGB(0, 0, 0)
+            stroke.Parent = panel
+            return panel
+        end
+
+        local panelGear = buatPanelStok("kiri")
+        local panelSeed = buatPanelStok("kanan")
+
         -- Ditempel ke CoreGui kalau executor mendukung, supaya tidak ikut hilang
         -- saat karakter respawn.
         local berhasil = pcall(function()
@@ -563,6 +632,20 @@ local function pasangBlackScreen()
                 tengah.Text = "👤 " .. LocalPlayer.Name .. "\n🍃 " .. ringkasAngka(daun)
 
                 task.wait(1)
+            end
+        end)
+
+        -- Data (tasSeed/tasGear) sudah update SAAT ITU JUGA tiap pembelian
+        -- sukses (lihat beliDari) -- loop ini cuma menggambar ulang teksnya
+        -- secara berkala (Config.JedaBagStock, default 5 menit), bukan sumber
+        -- kebenaran datanya. Digambar sekali segera saat gui baru terpasang,
+        -- tidak menunggu 5 menit pertama, supaya panel tidak nyangkut di
+        -- "(memuat...)" lama-lama.
+        task.spawn(function()
+            while gui.Parent do
+                panelGear.Text = "🛠️ GEAR\n" .. formatTas(tasGear)
+                panelSeed.Text = "🌱 SEED\n" .. formatTas(tasSeed)
+                task.wait(Config.JedaBagStock)
             end
         end)
     end)
@@ -1324,7 +1407,7 @@ end
 -- ==========================================================
 -- Dipakai bersama oleh beli seed dan beli gear -- satu-satunya beda adalah
 -- peran NPC yang didekati, remote yang ditembak, dan nama GUI shop-nya.
-local function beliDari(daftar, peran, tembak, labelNPC, namaGuiShop)
+local function beliDari(daftar, peran, tembak, labelNPC, namaGuiShop, tasHitung)
     -- BEDA dengan jual: membeli WAJIB dari dekat.
     --
     -- Secara teknis PurchaseSeed/PurchaseGear tetap diterima dari jarak jauh,
@@ -1376,6 +1459,10 @@ local function beliDari(daftar, peran, tembak, labelNPC, namaGuiShop)
                 dibeli = dibeli + 1
                 dibeliItemIni = dibeliItemIni + 1
                 gagalBerturut = 0
+                -- Bag Stock (panel di pasangBlackScreen): dihitung dari sisi
+                -- pembelian, bukan scan Backpack -- lihat catatan di deklarasi
+                -- tasSeed/tasGear.
+                tasHitung[s.nama] = (tasHitung[s.nama] or 0) + 1
             else
                 gagalBerturut = gagalBerturut + 1
                 if gagalBerturut >= 3 then
@@ -1411,13 +1498,13 @@ end
 local function beli(daftar)
     return beliDari(daftar, "seed",
         function(nama) Networking.SeedShop.PurchaseSeed:Fire(nama) end,
-        "penjual seed", "SeedShop")
+        "penjual seed", "SeedShop", tasSeed)
 end
 
 local function beliGear(daftar)
     return beliDari(daftar, "gear",
         function(nama) Networking.GearShop.PurchaseGear:Fire(nama) end,
-        "penjual gear", "GearShop")
+        "penjual gear", "GearShop", tasGear)
 end
 
 local function jual()
