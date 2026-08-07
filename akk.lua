@@ -187,6 +187,73 @@ if not okNet then
 end
 
 -- ==========================================================
+-- TUTORIAL BYPASS (bantu akun baru supaya tidak macet di 1 Leaf)
+-- ==========================================================
+-- Berjalan TANPA GERBANG config -- akun baru mendarat di tutorial dengan 1
+-- Leaf, dan seluruh pekerjaan script ini adalah belanja, jadi tidak ada
+-- alasan untuk membuatnya bisa dimatikan.
+--
+-- TutorialCompleted TIDAK ditulis sendiri dari klien -- itu satu-satunya
+-- penanda yang direplikasi SERVER, dan dipakai loop ini sebagai syarat
+-- berhenti. Menulisnya sendiri dari klien akan membuat loop ini berhenti
+-- padahal server belum tentu benar-benar menerimanya.
+--
+-- Tutorial juga mengunci ScrollingEnabled di SeedShop pada langkah "beli
+-- benih" -- tanpa membukanya lagi, stokShop() tidak akan pernah membaca
+-- item apa pun walau tutorialnya sendiri sudah selesai di server.
+task.spawn(function()
+    local function bersihkanSisiKlien()
+        -- InTutorial milik TutorialController KLIEN, bukan server -- kalau
+        -- runner-nya berhenti di tengah dialog, atribut ini tidak akan
+        -- pernah hilang sendiri tanpa dipaksa.
+        pcall(function() workspace:SetAttribute("InTutorial", nil) end)
+        pcall(function()
+            local pg = LocalPlayer:FindFirstChild("PlayerGui")
+            local ui = pg and pg:FindFirstChild("TutorialUI")
+            if ui then ui.Enabled = false end
+        end)
+        pcall(function()
+            local pg = LocalPlayer:FindFirstChild("PlayerGui")
+            local shop = pg and pg:FindFirstChild("SeedShop")
+            local frame = shop and shop:FindFirstChild("Frame")
+            if not frame then return end
+            for _, c in ipairs(frame:GetChildren()) do
+                if c:IsA("ScrollingFrame") then c.ScrollingEnabled = true end
+            end
+        end)
+    end
+
+    local batas = os.clock() + 600
+    local percobaan = 0
+
+    while os.clock() < batas do
+        -- Syarat berhentinya HANYA atribut milik server.
+        if LocalPlayer:GetAttribute("TutorialCompleted") == true then
+            if percobaan > 0 then
+                warn(string.format("[TUTORIAL] Diakui server setelah %d percobaan", percobaan))
+            end
+            bersihkanSisiKlien()
+            return
+        end
+
+        percobaan = percobaan + 1
+        pcall(function()
+            if Networking.Tutorial and Networking.Tutorial.Complete then
+                Networking.Tutorial.Complete:Fire()
+            end
+        end)
+        bersihkanSisiKlien()
+
+        -- Rapat di awal, lalu melambat -- akun yang memang di tutorial
+        -- hampir selalu selesai di percobaan pertama; jendela panjangnya
+        -- untuk yang tutorialnya belum sempat mulai.
+        task.wait(percobaan <= 5 and 3 or 15)
+    end
+
+    warn("[TUTORIAL] Belum diakui server setelah 10 menit — akun mungkin masih terkunci di tutorial")
+end)
+
+-- ==========================================================
 -- GERAK
 -- ==========================================================
 local function karakter()
